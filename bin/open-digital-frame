@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+
+import sys
+import open_digital_frame.odf as odf
+
+odf.main()
