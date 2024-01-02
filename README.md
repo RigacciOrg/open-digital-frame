@@ -1,7 +1,7 @@
 # open-digital-frame
 Software to create a digital photo frame: browse image directories and do slideshows with image panning and cropping on-the-fly
 
-## Directory nfo file
+## The directory folder.nfo file
 
 The directory browser of Open Digital Frame searches for a 
 **folder.nfo** file into each subdirectory. The file is a simple 
@@ -21,12 +21,18 @@ This is an example:
 </slideshow>
 ```
 
-## Playlist Format
+## The directory thumbnail
+
+If a directory contains a **folder.jpg** or **folder.png**, that 
+image is used as a thumbnails into the Open Digital Frame 
+directory browser.
+
+## The playlist.m3u file format
 
 The playlist is a text file saved into the directory that
 contains the images. The default, preferred name is
 **playlist_16x9.m3u**, other names searched for are
-**playlist_16x9.m3u** and **playlist.m3u**.
+**playlist_4x3.m3u** and **playlist.m3u**.
 
 You can set the playlist filename preferences into the
 configuration file.
