@@ -1,0 +1,1461 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+photo-reframe -- Slideshow with static pan and zoom of images.
+
+Show images from a directory, reading a playlist with
+filenames and geometries to zoom/crop images on-the-fly.
+Each playlist entry is of the type:
+
+    IMG_6605.JPG|2829x1591+804+781
+
+Default playlist filename is "playlist_16x9.m3u" (or different
+screen widht/height ratio, see command line options) or
+"playlist.m3u".
+
+Playlist can be generated interactively reframing each image
+on the screen. Screen aspect ratio defaults to 16:9, but can
+be changed by command line options.
+
+Press F1 or ? for a list of keyboard shortcuts.
+
+See function spitDataStructures() to learn about internal
+data structures used by the program.
+"""
+
+# For Qt5 doc see: https://doc.qt.io/qt-5/qmainwindow.html
+
+import argparse
+import logging
+import os
+import os.path
+import random
+import re
+import signal
+import subprocess
+import sys
+import time
+
+from collections import deque
+from PIL import Image, ExifTags
+
+from PyQt5 import QtCore
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QPixmap, QColor, QTransform, QPalette, QCursor, QBrush
+from PyQt5.QtWidgets import QMainWindow, QApplication, QGraphicsScene, QGraphicsView, QFrame, QMessageBox, QLabel, QInputDialog, QLineEdit
+
+__author__ = "Niccolo Rigacci"
+__copyright__ = "Copyright 2019-2023 Niccolo Rigacci <niccolo@rigacci.org>"
+__license__ = "GPLv3-or-later"
+__email__ = "niccolo@rigacci.org"
+__version__ = "0.5.3"
+
+logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.DEBUG)
+
+# Window title
+APP_TITLE = u'Photo Reframe App'
+
+# External exiv2 command to edit Orientation and UserComment.
+EXIV2_COMMAND = 'exiv2'
+# External command to share an image, filename and address
+# are passed as arguments.
+SHARE_COMMAND = 'photo-share'
+# External command to get Exif data, etc.
+INFO_COMMAND = 'photo-info'
+# External commands to disable/enable the screensaver; use [] to skip.
+SCREENSAVER_OFF_COMMAND = ['screensaver-off']
+SCREENSAVER_ON_COMMAND = ['screensaver-on']
+
+# Command line options defaults.
+DEFAULT_FRAME_RATIO = '16x9'
+DEFAULT_SLIDE_TIME = 6.0
+
+PLAYLIST = 'playlist'
+PLAYLIST_EXT = 'm3u'
+EXTENSIONS = ('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff')
+GEOMETRY_RE = '(\d+)x(\d+)\+(\d+)\+(\d+)'
+
+# Ignore these filenames when scanning directory for images.
+IGNORE_FILES = ['folder.jpg', 'folder.png']
+
+# Window's app default size (desktop space percentage).
+WIN_X = 0.01
+WIN_Y = 0.06
+WIN_WIDTH = 0.64
+WIN_HEIGHT = 0.68
+
+# Exit codes.
+EXIT_CODE_OK = 0
+EXIT_CODE_ERR = 1
+EXIT_CODE_QUIT = 2
+
+# Padding around image rectangle. Will be zero at full-screen.
+IMG_PADDING_X = 6
+IMG_PADDING_Y = 6
+
+BACKGROUND_COLOR = '#000000'       # Color to fill image backgroun
+GEOMETRY_FLAG_SET = '#7cff7c'      # Green
+GEOMETRY_FLAG_NOTSET = '#ff7c7c'   # Red
+GEOMETRY_FLAG_CHANGED = '#ffff7c'  # Yellow
+GEOMETRY_FLAG_HIDE = '#000000'     # Border hidden in full-screen
+
+# Info messages are shown for a short time into a pop-up.
+POPUP_TIMEOUT = 3.0
+
+# Exit read-only mode by pressing CHEAT_REPEAT_KEY_COUNT times "S", then "Y".
+CHEAT_REPEAT_KEY_COUNT = 7
+
+QLABEL_COMMENT_CSS = """QLabel {
+    font: %dpx;
+    color: #ffff00;
+    font-weight: regular;
+    font-family: "Helvetica";
+    background-color: rgba(0, 0, 0, 0.5);
+}"""
+
+QLABEL_INFO_CSS = """QLabel {
+    font-size: %dpx;
+    color: #ffff00;
+    font-weight: regular;
+    font-family: "Helvetica";
+    background-color: rgba(0, 0, 0, 0.5);
+    padding: 0.25em;
+}"""
+
+
+# Exif Orientation tags handled by this app.
+EXIF_ORIENTATION_TAGS = (1, 3, 6, 8)
+# Tag    Row Zero    Column Zero
+# -------------------------------
+# 1      top         left side
+# 2      top         right side
+# 3      bottom      right side
+# 4      bottom      left side
+# 5      left side   top
+# 6      right side  top
+# 7      right side  bottom
+# 8      left side   bottom
+
+# Rotation required by Exif Orientation tag.
+EXIF_ROTATE = { 1: 0, 3: -180, 6: -270, 8: -90 }
+
+
+# ------------------------------------------------------------------------
+# Some util functions.
+# ------------------------------------------------------------------------
+def utf16_guess_decode(string, hint=None):
+    """ Try to guess Little-Endian or Big-Endian bytes ordering """
+
+    try:
+        lit_endian = string.decode('utf-16le').strip()
+    except:
+        lit_endian = ''
+    try:
+        big_endian = string.decode('utf-16be').strip()
+    except:
+        big_endian = ''
+
+    if lit_endian == '' and big_endian == '':
+        guess = u'I'
+    elif lit_endian != '' and hint == u'I':
+        guess = u'I'
+    elif big_endian != '' and hint == u'M':
+        guess = u'M'
+    elif lit_endian == '' or ord(lit_endian[0]) >= 0x4000:
+        # If the codepoint of first char is too high, use the other guess.
+        guess = u'M'
+    else:
+        guess = u'I'
+
+    if guess == u'I':
+        logging.debug(u'Guessed UTF-16 Little-Endian (Intel) bytes ordering')
+        return lit_endian
+    else:
+        logging.debug(u'Guessed UTF-16 Big-Endian (Motorola) bytes ordering')
+        return big_endian
+
+
+def nullTerminate(string):
+    """ Return the string truncated at the first NULL char """
+    # string => Python3: <class 'bytes'>, Python2: <type 'str'>
+    i = string.find(b'\0')
+    if i >= 0:
+        return string[0:i]
+    else:
+        return string
+
+
+def percDiff(int1, int2):
+    """ Return the difference percentage between integers int1 and int2 """
+    return float(abs(int1 - int2)) / int1
+
+
+def rational_val(r):
+    """ Return a floating point number, given (dividend, divisor) """
+    return float(r[0]) / float(r[1])
+
+
+def get_exif_value(values, namespace, tag, val_type):
+    """ Return an Exif value searching by tag/namespace """
+    try:
+        i = list(namespace.values()).index(tag)
+        k = list(namespace.keys())[i]
+        v = values[k]
+        if val_type == 'dict':
+            return v
+        elif val_type == 'bytes':
+            # Python3: <class 'bytes'>, Python2: <type 'str'>
+            return v
+        elif val_type == 'int':
+            return int(v)
+        elif val_type == 'str':
+            return str(v)
+        elif val_type == 'rational':
+            return rational_val(v)
+        elif val_type == 'dms':
+            return rational_val(v[0]) + rational_val(v[1]) / 60 + rational_val(v[2]) / 3600
+    except:
+        pass
+    return None
+
+
+def exif_byte_order(filename):
+    """ Read some bytes of the Exif data structure """
+    byte_order = None
+    try:
+        with open(filename, 'rb') as f:
+            data_bytes = f.read(16)
+    except:
+        logging.error(u'Reading file header')
+        return byte_order
+    try:
+        if data_bytes[6:12].upper() == b'EXIF\x00\x00':
+            if data_bytes[12:14] == b'II':
+                logging.debug(u'Little-Endian (Intel) Exif data')
+                byte_order = u'I'
+            elif data_bytes[12:14] == b'MM':
+                logging.debug(u'Big-Endian (Motorola) Exif data')
+                byte_order = u'M'
+            else:
+                logging.debug(u'Unknown Byte Order in Exif data')
+    except:
+        logging.error(u'Error reading the Byte Order in file header')
+    return byte_order
+
+# ------------------------------------------------------------------------
+# ------------------------------------------------------------------------
+class getImageState():
+    """ Calculate the geometry upon zoom and pan of the image view """
+
+    def __init__(self, mainWindow):
+        """ Do the math, rounded to the nearest integer """
+        self.image_name = mainWindow.current_image
+        self.image_width = mainWindow.image_width
+        self.image_height = mainWindow.image_height
+        self.scene_width = mainWindow.scene.width()
+        self.scene_height = mainWindow.scene.height()
+        self.view_width = mainWindow.view.size().width()
+        self.view_height = mainWindow.view.size().height()
+        self.frame_ratio_width = mainWindow.frame_ratio_width
+        self.frame_ratio_height = mainWindow.frame_ratio_height
+        self.horizontal_scroll = mainWindow.view.horizontalScrollBar().value()
+        self.vertical_scroll = mainWindow.view.verticalScrollBar().value()
+        self.geom_width = int(round(self.view_width / mainWindow.zoom))
+        self.geom_height = int(round(self.view_height / mainWindow.zoom))
+        self.geom_x = int(round(self.horizontal_scroll / mainWindow.zoom))
+        self.geom_y = int(round(self.vertical_scroll / mainWindow.zoom))
+        # Scrollbars values have different min/max range when Exif-rotated.
+        # Only negative values must be corrected (zero is OK).
+        if mainWindow.exif_orientation_tag == 6:
+            if self.horizontal_scroll < 0:
+                self.geom_x += self.image_width
+        elif mainWindow.exif_orientation_tag == 8:
+            if self.vertical_scroll < 0:
+                self.geom_y += self.image_height
+        elif mainWindow.exif_orientation_tag == 3:
+            if self.horizontal_scroll < 0:
+                self.geom_x += self.image_width
+            if self.vertical_scroll < 0:
+                self.geom_y += self.image_height
+
+
+    def adjustGeometry(self):
+        """ Adjust rounding errors in geometry calculation """
+        logging.debug(u'Calculated geometry: %s|%dx%d+%d+%d' % (self.image_name, self.geom_width, self.geom_height, self.geom_x, self.geom_y))
+        if self.geom_x < 0:
+            self.geom_x = 0
+        if self.geom_y < 0:
+            self.geom_y = 0
+        # For small (< 1%) differencies use image size instead of selected geometry.
+        diff = percDiff(self.geom_width, self.image_width)
+        if diff > 0 and diff < 0.01:
+            logging.debug("geom_width = %d, image_width = %d: using the second one" % (self.geom_width, self.image_width))
+            self.geom_width = self.image_width
+        diff = percDiff(self.geom_height, self.image_height)
+        if diff > 0 and diff < 0.01:
+            logging.debug("geom_height = %d, image_height = %d: using the second one" % (self.geom_height, self.image_height))
+            self.geom_height = self.image_height
+        # Force aspect ratio, but warn if corrected.
+        proper_height = int(float(self.geom_width) / self.frame_ratio_width * self.frame_ratio_height)
+        diff = percDiff(self.geom_height, proper_height)
+        if diff > 0 and diff < 0.01:
+            logging.debug(u'geom_height = %d, using %d to respect ratio' % (self.geom_height, proper_height))
+            self.geom_height = proper_height
+        logging.info(u'Adjusted geometry: %s|%dx%d+%d+%d' % (self.image_name, self.geom_width, self.geom_height, self.geom_x, self.geom_y))
+
+
+# ------------------------------------------------------------------------
+# ------------------------------------------------------------------------
+class photoView(QGraphicsView):
+    """ Widget used to displaying the scene, i.e. just the image """
+
+    def __init__(self, scene, app):
+        super(photoView, self).__init__(scene, app)
+        self.mouseWasMoved = False
+
+    def wheelEvent(self, event):
+        """ Moving the mouse wheel: do zoom and invalidate the geometry flag """
+        moose = event.angleDelta().y() / 120
+        if moose > 0:
+            myMainWindow.zoomIn()
+        elif moose < 0:
+            myMainWindow.zoomOut()
+        myMainWindow.showGeometryFlag(view_moved=True)
+
+
+    def mousePressEvent(self, event):
+        """ Mouse press: check if mouse will be moved """
+        self.mouseWasMoved = False
+        super(photoView, self).mousePressEvent(event)
+
+
+    def mouseReleaseEvent(self, event):
+        """ Mouse release: show next or previous image if not moved """
+        super(photoView, self).mouseReleaseEvent(event)
+        if not self.mouseWasMoved:
+            if event.button() == Qt.LeftButton:
+                myMainWindow.nextImage()
+            elif event.button() == Qt.RightButton:
+                myMainWindow.nextImage(-1)
+
+
+    def mouseMoveEvent(self, event):
+        """ When panning with mouse, invalidate the geometry flag """
+        super(photoView, self).mouseMoveEvent(event)
+        self.mouseWasMoved = True
+        myMainWindow.showGeometryFlag(view_moved=True)
+
+
+    def keyPressEvent(self, event):
+        """ Some keys are intercepted for fast browsing, others default for panning """
+        # PageUp, PageDown, Home and End are used for fast browsing.
+        if event.key() == QtCore.Qt.Key_PageUp:
+            myMainWindow.nextImage(-10)
+            return
+        if event.key() == QtCore.Qt.Key_PageDown:
+            myMainWindow.nextImage(10)
+            return
+        if event.key() == QtCore.Qt.Key_Home:
+            new_pos = myMainWindow.images_playlist.index(myMainWindow.first_image_index)
+            if new_pos != 0:
+                myMainWindow.nextImage(new_pos)
+            return
+        if event.key() == QtCore.Qt.Key_End:
+            new_pos = myMainWindow.images_playlist.index(myMainWindow.last_image_index)
+            if new_pos != 0:
+                myMainWindow.nextImage(new_pos)
+            return
+        super(photoView, self).keyPressEvent(event)
+        # When panning with arrow keys, invalidate the geometry flag.
+        if event.key() in (QtCore.Qt.Key_Left, QtCore.Qt.Key_Up, QtCore.Qt.Key_Right, QtCore.Qt.Key_Down):
+            myMainWindow.showGeometryFlag(view_moved=True)
+
+
+# ------------------------------------------------------------------------
+# ------------------------------------------------------------------------
+class photoReframeApp(QMainWindow):
+    """ Main window and app functions """
+
+    def __init__(self):
+        super(photoReframeApp, self).__init__()
+
+        # Public attributes.
+        self.frame_ratio_width = None     # Image frame ratio: width (float).
+        self.frame_ratio_height = None    # Image frame ratio: height (float).
+        self.frame_ratio = None           # Image frame ratio: (width / height).
+        self.slide_time = None            # Time in seconds for slideshow timer.
+        self.directory = None             # Base directory for playlist and images.
+        self.playlist = None              # Playlist filename, with path.
+        self.playlist_changed = False     # Becomes true when setting an image geometry.
+        self.shuffle = False              # Show images in random order.
+        self.limit_loops = 0              # How many loop of slideshow to play; 0 = infinite.
+        self.loop_counter = 0             # Loop counter.
+        self.limit_slides = 0             # How many images to play; 0 = all the playlist.
+        self.slide_counter = 0            # Counter of shown images.
+        self.closing_now = False          # Set to True when app closing is initiated.
+
+        self.images_playlist = deque([])  # Double-ended queue (list) with images indexes in play order.
+        self.image_names = {}             # Dictionary with the filename for each image index.
+        self.image_geometries = {}        # Dictionary with the geometry for each image (or None).
+        self.first_image_index = None     # Index of the first image to show.
+        self.last_image_index = None      # Index of the last image to show.
+        self.current_index = None         # Index of the image currently displayed.
+        self.read_only = False            # If True inhibits the saving (overwriting) of the playlist.
+        self.force_save_cheat = 0         # Exit read-only mode by pressing several times "S", then "Y".
+        self.pending_delete = False       # A request for file deletion is waiting the "Y" confirm.
+
+        self.current_image = None         # Filename (no path) of currently displayed image.
+        self.exif_orientation_tag = None  # Image's Exif Orientation tag (see EXIF_ROTATE dictionary).
+        self.exif_usercomment = None      # Image subtitle from Exif UserComment.
+        self.exif_info = None             # Image info extracted from Exif data.
+        self.exif_byte_order = None       # 'I': Little-Endian (Intel), 'M': Big-Endian (Motorola)
+        self.caption_display = True       # Toggle display of Exif UserComment.
+        self.info_display = False         # Toggle display of Exif.* tags.
+        self.image_rotate = None          # Rotation (in degrees) imposed by exif_orientation_tag.
+        self.image_width = None           # Width in pixels of current image, Exif rotation applied.
+        self.image_height = None          # Height in pixels of current image, Exif rotation applied.
+        self.zoom = None                  # Current zoom ratio of image in view rectangle.
+
+        # Before applying to widget's scrollbars, this values must be adjusted for Exif rotation:
+        self.view_hscroll = None          # Image view: horizontal scroll position
+        self.view_vscroll = None          # Image view: vertical scroll position
+
+        self.setWindowTitle(APP_TITLE)
+
+        parser = argparse.ArgumentParser(description=u'Show images listed in playlist, which contains "filename|geometry" entries.')
+        parser.add_argument('playlist', type=str, help='playlist filename, or directory which contains it')
+        parser.add_argument('-f', '--fullscreen', action='store_true', help='start in fullscreen mode')
+        parser.add_argument('-r', '--ratio', metavar='WxH', type=str, default=DEFAULT_FRAME_RATIO, help='screen ratio, width x height (default %s)' % (DEFAULT_FRAME_RATIO,))
+        parser.add_argument('-p', '--play', action='store_true', help='start slideshow')
+        parser.add_argument('--timer', type=float, default=DEFAULT_SLIDE_TIME, help='time for each slide in seconds (default %.1f)' % (DEFAULT_SLIDE_TIME,))
+        parser.add_argument('--no-usercomment', action='store_true', help='default to Exif UserComment disabled')
+        parser.add_argument('--shuffle', action='store_true', help='show images in random order')
+        parser.add_argument('--loop', type=int, default=-1, help='for --play mode only: exit after LOOP slideshow repeat (default 0: endless loop)')
+        parser.add_argument('--count', type=int, default=-1, help='for --play mode only: show only COUNT images (default 0: all the images)')
+        parser.add_argument('--read-only', action='store_true', help='disable playlist saving/overwriting')
+        args = parser.parse_args()
+        if sys.version_info[0] < 3:
+            args.playlist = args.playlist.decode('utf-8')
+
+        # Determines screen width/height ratio.
+        try:
+            w, h = args.ratio.split('x')
+            self.frame_ratio_width = float(w)
+            self.frame_ratio_height = float(h)
+            self.frame_ratio = self.frame_ratio_width / self.frame_ratio_height
+        except:
+            logging.error(u'Error in screen ratio, using default "%s"' % (DEFAULT_FRAME_RATIO,))
+            w, h = DEFAULT_FRAME_RATIO.split('x')
+            self.frame_ratio_width = float(w)
+            self.frame_ratio_height = float(h)
+            self.frame_ratio = self.frame_ratio_width / self.frame_ratio_height
+
+        # Determines directory path and playlist filename.
+        if os.path.isfile(args.playlist):
+            self.playlist = args.playlist
+            self.directory = os.path.dirname(self.playlist)
+            if self.directory == '':
+                self.directory = '.'
+        elif not os.path.isdir(args.playlist):
+            logging.error(u'Path "%s" does not exists' % (args.playlist,))
+            sys.exit(EXIT_CODE_ERR)
+        else:
+            # The passed argument is a directory.
+            self.directory = args.playlist
+            # Preferred playlist name: "playlist_16x9.m3u" ...
+            p1 = os.path.join(self.directory, '%s_%dx%d.%s' % (PLAYLIST, self.frame_ratio_width, self.frame_ratio_height, PLAYLIST_EXT))
+            # ... fallback: "playlist.m3u"
+            p2 = os.path.join(self.directory, '%s.%s' % (PLAYLIST, PLAYLIST_EXT))
+            if os.path.isfile(p1):
+                self.playlist = p1
+            elif os.path.isfile(p2):
+                self.playlist = p2
+            else:
+                self.playlist = p1
+        logging.info(u'Using playlist "%s" from directory "%s"' % (os.path.basename(self.playlist), self.directory,))
+
+        # Handle the other command line paramteres.
+        self.shuffle = args.shuffle
+        self.slide_time = args.timer
+        if args.play:
+            self.limit_loops = args.loop
+            self.limit_slides = args.count
+        if args.no_usercomment:
+            self.caption_display = False
+        if args.read_only:
+            self.read_only = True
+
+        # Build the lists (names, geometries) of images.
+        self.readPlaylist()
+        self.scanDirectory()
+        if len(self.images_playlist) < 1:
+            logging.error(u'No images found in "%s"' % (self.directory,))
+            sys.exit(EXIT_CODE_ERR)
+        if self.shuffle:
+            random.shuffle(self.images_playlist)
+        self.first_image_index = self.images_playlist[0]
+        self.last_image_index = self.images_playlist[-1]
+
+        # Place the window into the screen.
+        screen_width = app.desktop().availableGeometry().width()
+        screen_height = app.desktop().availableGeometry().height()
+        logging.debug(u'Screen resolution: %dx%d' % (screen_width, screen_height))
+        # Geometry (size and position) of the QMainWindow widget, excluding any window frame.
+        self.window_pos_x = int(screen_width * WIN_X)  # Consider the window left border.
+        self.window_pos_y = int(screen_height * WIN_Y)  # Consider the window titlebar and top border.
+        self.window_width = int(screen_width * WIN_WIDTH)  # Consder window left and right border.
+        self.window_height = int(screen_height * WIN_HEIGHT)  # Consider the window top/bottom borders, titlebar and desktop bottom panel.
+        # Set size (excluding any window frame) and position of the QMainWindow widget.
+        self.setGeometry(self.window_pos_x, self.window_pos_y, self.window_width, self.window_height)
+        logging.debug(u'Setting QMainWindow widget geometry %dx%d+%d+%d' % (self.window_width, self.window_height, self.window_pos_x, self.window_pos_y))
+
+        # Load a blank image into a QPixmap Class.
+        self.image = QPixmap(640, 480)
+        self.scene = QGraphicsScene()
+        self.scene.addPixmap(self.image)
+        self.scene.setSceneRect(0, 0, self.image.size().width(), self.image.size().height())
+        # Create the QGraphicsView, which will contain the image,
+        # size and position will be determined on resizeEvent().
+        self.view = photoView(self.scene, self)
+        self.view.setFrameStyle(QFrame.NoFrame)
+        self.view.setBackgroundBrush(QBrush(QColor(BACKGROUND_COLOR), Qt.SolidPattern))
+        # Allow mouse scroll and drag, but hide scrollbars.
+        self.view.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.view.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.view.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        view_width, view_height = self.calculateImageViewSize()
+        self.view.resize(view_width, view_height)
+        self.caption_label = QLabel(self)
+        self.popup_label = QLabel(self)
+        self.imginfo_label = QLabel(self)
+
+        # Init complete and ready to main loop; trap TERM and INT signals.
+        # NOTICE: Signals hare ignored during Qt loop, they are processed only when
+        # some Python code is run (slide timer, keypresses, etc.)
+        signal.signal(signal.SIGTERM, self.handleSignals)
+        signal.signal(signal.SIGINT, self.handleSignals)
+
+        # Go fullscreen if requested.
+        if args.fullscreen:
+            self.toggleFullscreen()
+        # Disable screensaver.
+        self.setScreensaver(False)
+
+        # Cannot use Python's threading because QtGui is not thread-safe: can't
+        # execute GUI functions into a timer function. Use QtCore.QTimer() instead.
+        # https://srinikom.github.io/pyside-docs/PySide/QtCore/QTimer.html
+        self.close_popup_timer = QtCore.QTimer(self)
+        self.close_popup_timer.timeout.connect(self.popup)
+        self.timer = QtCore.QTimer(self)
+        self.timer.timeout.connect(self.nextImage)
+        if args.play:
+            self.timer.start(int(self.slide_time * 1000))
+
+        self.images_playlist.rotate(1)
+        self.nextImage()
+
+
+    def handleSignals(self, signum, frame):
+        """ Handle INT and TERM signals """
+
+        logging.info(u'Received signal %d, exiting' % (signum,))
+        self.close()
+
+
+    def setScreensaver(self, enable):
+        """ Enable or disable the screensaver, calling external commands """
+
+        if enable:
+            cmd = SCREENSAVER_ON_COMMAND
+        else:
+            cmd = SCREENSAVER_OFF_COMMAND
+        if len(cmd) > 0:
+            logging.info(u'Executing: %s' % (' '.join(cmd),))
+            try:
+                subprocess.call(cmd)
+            except Exception as e:
+                exception_name = type(e).__name__
+                logging.warning(u'Cannot set screensaver; command "%s" returned "%s"' % (cmd, exception_name))
+
+
+    def showImageCaption(self):
+        """ Show the image caption into a subtitle-like label """
+
+        self.caption_label.clear()
+        if self.caption_display is False or self.exif_usercomment is None:
+            self.caption_label.resize(0, 0)
+            return
+        width, height = self.calculateImageViewSize()
+        pad_x, pad_y = self.calculateImageViewPadding()
+        font_px = int(height * 0.028)
+        label_pad_x = int(font_px * 0.50)
+        label_pad_y = int(font_px * 0.10)
+        label_margin_bottom = int(font_px * 0.50)
+        self.caption_label.setText(self.exif_usercomment)
+        self.caption_label.setStyleSheet(QLABEL_COMMENT_CSS % (font_px,))
+        self.caption_label.setAlignment(QtCore.Qt.AlignCenter)
+        label_w = self.caption_label.sizeHint().width() + label_pad_x * 2
+        label_h = self.caption_label.sizeHint().height() + label_pad_y * 2
+        self.caption_label.resize(label_w, label_h)
+        self.caption_label.move(int(pad_x + (width - label_w) / 2), int(height - label_h + pad_y - label_margin_bottom))
+
+
+    def showImageInfo(self):
+        """ Show Exif.Photo data as picture overlay """
+
+        if self.info_display is False or self.exif_info is None:
+            self.imginfo_label.resize(0, 0)
+            return
+        self.spitWindowSizes()
+        self.spitImageStatus()
+        cmd = [INFO_COMMAND, os.path.join(self.directory, self.current_image)]
+        logging.info(u'Executing: %s' % (' '.join(cmd),))
+        try:
+            info = subprocess.check_output(cmd).decode('utf-8').strip()
+        except Exception as e:
+            logging.error(u'Subprocess "%s" error: %s' % (SHARE_COMMAND, str(e),))
+            info = None
+        if info == None or info == '':
+            self.imginfo_label.resize(0, 0)
+            return
+        print(u'\n=== %s ===' % (INFO_COMMAND,))
+        print(info)
+        print('')
+        width, height = self.calculateImageViewSize()
+        pad_x, pad_y = self.calculateImageViewPadding()
+        font_px = int(height * 0.026)
+        label_x = int(height * 0.010)
+        label_y = int(height * 0.010)
+        self.imginfo_label.setText(info)
+        self.imginfo_label.setStyleSheet(QLABEL_INFO_CSS % (font_px,))
+        label_w = self.imginfo_label.sizeHint().width()
+        label_h = self.imginfo_label.sizeHint().height()
+        self.imginfo_label.resize(label_w, label_h)
+        self.imginfo_label.move(pad_x + label_x, pad_y + label_y)
+
+
+    def readPlaylist(self):
+        """ Read playlist from directory, fill images_playlist[], image_names{} and geometry{} """
+        if os.path.isfile(self.playlist):
+            with open(self.playlist, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line == '' or line.startswith('#'): continue
+                    if '|' in line:
+                        img_name, img_geometry = line.split('|')
+                        if not re.match(GEOMETRY_RE, img_geometry):
+                            logging.warning(u'Invalid geometry for image "%s"' % (img_name,))
+                            img_geometry = None
+                    else:
+                        img_name, img_geometry = line, None
+                    if os.path.isfile(os.path.join(self.directory, img_name)):
+                        new_index = len(self.images_playlist) + 1
+                        self.images_playlist.append(new_index)
+                        self.image_names[new_index] = img_name
+                        self.image_geometries[new_index] = img_geometry
+                    else:
+                        logging.warning(u'Image in playlist does not exists: "%s"' % (img_name,))
+        logging.info(u'Read file "%s": %d images' % (self.playlist, len(self.images_playlist)))
+
+
+    def scanDirectory(self):
+        """ Scan directory for images, merge into images_playlist[] and image_names{} """
+        files = os.listdir(self.directory)
+        files.sort()
+        for f in files:
+            if f in IGNORE_FILES:
+                continue
+            if os.path.isfile(os.path.join(self.directory, f)):
+                name, ext = os.path.splitext(f)
+                if ext.lower() in EXTENSIONS:
+                    if f not in self.image_names.values():
+                        new_index = len(self.images_playlist) + 1
+                        self.images_playlist.append(new_index)
+                        self.image_names[new_index] = f
+                        self.image_geometries[new_index] = None
+        logging.info(u'Merged images from "%s": total %d images' % (self.directory, len(self.images_playlist)))
+
+
+    def nextImage(self, direction=1):
+        """ Load the next image into the view """
+
+        if self.closing_now: return
+        # In auto-play mode, show only images with geometry properly set.
+        # In normal mode, every image in list will be displayed.
+        skipped = 0
+        skip_this_image = True
+        while skip_this_image:
+            self.images_playlist.rotate(-direction)
+            self.current_index = self.images_playlist[0]
+            # If in auto-play mode, check if repeat loop is over.
+            if self.timer.isActive():
+                if self.current_index == self.first_image_index:
+                    if self.limit_loops > 0:
+                        self.loop_counter += 1
+                        if self.loop_counter > self.limit_loops:
+                            app.exit(EXIT_CODE_OK)
+            self.current_image = self.image_names[self.current_index]
+            self.current_geometry = self.image_geometries[self.current_index]
+            if not self.timer.isActive():
+                skip_this_image = False
+            else:
+                if self.current_geometry is not None:
+                    skip_this_image = False
+                else:
+                    skipped += 1
+                    if skipped >= len(self.images_playlist):
+                        logging.warning(u'Slideshow is running, but no images with geometry found')
+                        self.toggleAutoplay()
+                        skip_this_image = False
+
+        logging.info(u'Current image = "%s"' % (self.current_image,))
+        filename = os.path.join(self.directory, self.current_image)
+        self.getExifTag(filename)
+        self.image_rotate = EXIF_ROTATE[self.exif_orientation_tag]
+        logging.debug(u'Exif Orientation tag = %s' % (self.exif_orientation_tag,))
+
+        # Reset transformation and load the new image into the view.
+        self.view.resetTransform()
+        try:
+            self.image = QPixmap(filename)
+            if self.image.isNull():
+                raise OSError('QPixmap image isNull()')
+        except Exception as e:
+            logging.error(u'Error loading image "%s": %s' % (filename, str(e)))
+            self.image = QPixmap(4000, 3000)
+            self.image.fill(QColor("#7c7c7c"))
+            self.current_geometry = None
+            self.image_geometries[self.current_index] = None
+
+        # NOTICE: The scene does not shirink automatically if image does, so setSceneRect().
+        self.scene.clear()
+        self.scene.addPixmap(self.image)
+        self.scene.setSceneRect(0, 0, self.image.size().width(), self.image.size().height())
+
+        # Calculate visualization parameters.
+        self.image_width = self.image.size().width()
+        self.image_height = self.image.size().height()
+        # Il image is rotated, exchange width and height.
+        if self.exif_orientation_tag in (6, 8):
+            self.image_width, self.image_height = self.image.size().height(), self.image.size().width()
+        # Show image at existing geometry or at full height.
+        if self.current_geometry is not None:
+            logging.debug(u'A geometry is defined for "%s"' % (self.current_image,))
+            self.zoomToGeometry()
+        else:
+            logging.debug(u'No geometry defined for "%s"' % (self.current_image,))
+            self.zoom = 1.0
+            self.fitImageHeight(fullHeight=True)
+        self.showGeometryFlag()
+        self.showImageCaption()
+        self.showImageInfo()
+        if self.timer.isActive():
+            if self.limit_slides > 0:
+                self.slide_counter += 1
+                if self.slide_counter == self.limit_slides:
+                    # Skip forward to last image to start a new loop.
+                    i = list(self.images_playlist).index(self.last_image_index)
+                    self.images_playlist.rotate(-i)
+                    self.slide_counter = 0
+        #print('self.view.transform().m11() (horizontal scaling factor)    = %s' % (self.view.transform().m11(),))
+        #print('self.view.transform().m12() (vertical shearing factor)     = %s' % (self.view.transform().m12(),))
+        #print('self.view.transform().m13() (horizontal projection factor) = %s' % (self.view.transform().m13(),))
+        #print('self.view.transform().m21() (horizontal shearing factor)   = %s' % (self.view.transform().m21(),))
+        #print('self.view.transform().m22() (vertical scaling factor)      = %s' % (self.view.transform().m22(),))
+        #print('self.view.transform().m23() (vertical projection factor)   = %s' % (self.view.transform().m23(),))
+        #print('self.view.transform().m31() (horizontal translation factor) = %s' % (self.view.transform().m31(),))
+        #print('self.view.transform().m32() (vertical translation factor)   = %s' % (self.view.transform().m32(),))
+        #print('self.view.transform().m33() (division factor)               = %s' % (self.view.transform().m33(),))
+        #print('self.view.transform().isRotating() = %s' % (self.view.transform().isRotating(),))
+
+
+
+    def decodeExifUserComment(self, exif_tag):
+        """ Get the string from an Exif UserComment tag, with proper decoding """
+
+        #print("type(UserComment) = %s" % (type(exif_tag)))
+        # Python3: <class 'bytes'>
+        # Python2: <type 'str'>
+        #print("Exif tag", exif_tag)
+        try:
+            code_id = exif_tag[0:8].upper()
+            content = exif_tag[8:]
+        except:
+            return None
+        if code_id.startswith(b'ASCII'):
+            logging.debug(u'UserComment char code: ITU-T T.50 IA5 (ASCII)')
+            user_comment = nullTerminate(content).decode('ascii', 'ignore').rstrip()
+        elif code_id.startswith(b'JIS'):
+            logging.debug(u'UserComment char code: JIS X208-1990')
+            user_comment = nullTerminate(content).decode('shift_jis', 'ignore').rstrip()
+        elif code_id.startswith(b'UNICODE'):
+            # Unicode is UCS-2 (16bit) in Exif, guess the byte order.
+            logging.debug(u'UserComment char code: Unicode')
+            user_comment = utf16_guess_decode(content).rstrip()
+        elif code_id.startswith(b'\0' * 8):
+            logging.debug(u"UserComment char code: Undefined ('\\0' * 8); assuming UTF-8")
+            user_comment = nullTerminate(content).decode('utf-8', 'ignore').rstrip()
+        else:
+            logging.debug(u'UserComment char code: Unknown; assuming UTF-8')
+            user_comment = nullTerminate(exif_tag).decode('utf-8', 'ignore').strip()
+        if len(user_comment) == 0:
+            user_comment = None
+        return user_comment
+
+
+    def getExifTag(self, filename):
+        """ Set self.exif_orientation_tag and self.exif_usercomment from Exif tags """
+
+        # Assume Exif Orientation tag = 1, if missing.
+        self.exif_orientation_tag = 1
+        self.exif_usercomment = None
+        self.exif_info = []
+        self.exif_info.append('Filename: %s' % (os.path.basename(filename),))
+        self.exif_byte_order = exif_byte_order(filename)
+        try:
+            # Get Exif Orientation from image.
+            # TODO: 'PngImageFile' object has no attribute '_getexif'
+            exif_data = Image.open(filename)._getexif()
+            if exif_data != None:
+                self.exif_orientation_tag = get_exif_value(exif_data, ExifTags.TAGS, 'Orientation', 'int')
+                comment = get_exif_value(exif_data, ExifTags.TAGS, 'UserComment', 'bytes')
+                self.exif_usercomment = self.decodeExifUserComment(comment)
+        except Exception as e:
+            logging.error(u'Error getting Exif data from image "%s": %s' % (os.path.basename(filename), str(e)))
+        if self.exif_orientation_tag not in EXIF_ORIENTATION_TAGS:
+            logging.warning(u'Invalid Exif Orientation tag: %s, assuming 1' % (self.exif_orientation_tag,))
+            self.exif_orientation_tag = 1
+
+
+    def spitImageStatus(self):
+        """ Print details about current image re-framing """
+
+        s = getImageState(self)
+        print(u'\n=== spitImageStatus() ===')
+        print(u'Filename = %s' % (self.current_image,))
+        print(u'Exif Orientation tag = %s' % (self.exif_orientation_tag,))
+        print(u'Image size = %dx%d' % (s.image_width, s.image_height))
+        print(u'Scene size = %dx%d' % (s.scene_width, s.scene_height))
+        print(u'Image view size = %dx%d' % (s.view_width, s.view_height))
+        print(u'Zoom = %s' % (self.zoom,))
+        print(u'horizontalScrollBar() = %s' % (s.horizontal_scroll,))
+        print(u'verticalScrollBar() = %s' % (s.vertical_scroll,))
+        print('')
+
+
+    def spitWindowSizes(self):
+        """ Print details about screen and window widgets """
+
+        print(u'\n=== spitWindowSizes() ===')
+        # screenGeometry() is the entire display resolution.
+        screen_geom = app.desktop().screenGeometry()
+        print(u'Screen size: screenGeometry() = %dx%d' % (screen_geom.width(), screen_geom.height()))
+
+        # availableGeometry() is the desktop space, excluding desktop panels, etc. 
+        available_space = app.desktop().availableGeometry()
+        print(u'Desktop space: availableGeometry() = %dx%d' % (available_space.width(), available_space.height()))
+
+        # frameGeometry() is the entire window, including decorations (borders, titlebar, etc.).
+        # WARNING: The correct size may be not available just after __init__(): this function
+        # can return instead the window size without decorations (borders, title bar, etc.).
+        # May be the desktop manager need some time to apply window decorations, etc.
+        # INFO: Executed just afer __init__(), the decorations are not included.
+        # INFO: Executed within a 0.01 sec timer, the decorations are not included.
+        # INFO: Executed within a 0.1 sec timer, the size is OK including decorations.
+        print(u'Window with decorations: frameGeometry() = %dx%d' % (self.frameGeometry().width(), self.frameGeometry().height()))
+
+        # QMainWindow.size() is the size of the window, excluding decorations.
+        print(u'Window space: QMainWindow.size(): %dx%d' % (self.size().width(), self.size().height()))
+
+        # QGraphicsView.size() is the size of the image view.
+        print(u'View size: QGraphicsView.size(): %dx%d' % (self.view.size().width(), self.view.size().height()))
+        print('')
+
+
+    def spitDataStructures(self):
+        """ Print data structures (dictionaries, deque, indexes) """
+        logging.info('image_names: %s' % (self.image_names,))
+        logging.info('image_geometries: %s' % (self.image_geometries,))
+        logging.info('images_playlist: %s' % (self.images_playlist,))
+        logging.info('first_image_index: %d' % (self.first_image_index),)
+        logging.info('last_image_index: %d' % (self.last_image_index),)
+        logging.info('current_index: %d' % (self.current_index),)
+
+
+    def resizeEvent(self, resizeEvent):
+        """ On resizing of the app's window, adjust the image view """
+
+        view_width, view_height = self.calculateImageViewSize()
+        self.view.resize(view_width, view_height)
+        padding_x, padding_y = self.calculateImageViewPadding()
+        self.view.move(padding_x, padding_y)
+        self.showImageCaption()
+        self.showImageInfo()
+        if self.current_image is not None:
+            self.zoomToGeometry()
+
+
+    def calculateImageViewPadding(self):
+        """ Calculate the padding of the imave view, to center it into window """
+
+        if self.isFullScreen():
+            padding_x, padding_y = 0, 0
+        else:
+            padding_x = int((self.size().width() - self.view.size().width()) / 2)
+            padding_y = int((self.size().height() - self.view.size().height()) / 2)
+        return (padding_x, padding_y)
+
+
+    def calculateImageViewSize(self):
+        """ Calculate the size of the image view, upon actual window size """
+
+        # Get the avaliable space for the image view.
+        if self.isFullScreen():
+            padding_x, padding_y = 0, 0
+        else:
+            padding_x, padding_y = IMG_PADDING_X, IMG_PADDING_Y
+        view_width = float(self.size().width() - padding_x * 2)
+        view_height = float(self.size().height() - padding_y * 2)
+        # Adjust size to self.frame_ratio.
+        if (view_width / view_height) > self.frame_ratio:
+            view_width = (view_height / self.frame_ratio_height) * self.frame_ratio_width
+        else:
+            view_height = (view_width / self.frame_ratio_width) * self.frame_ratio_height
+        # Round to the nearest integer.
+        view_width = int(round(view_width))
+        view_height = int(round(view_height))
+        # If we are in full screen mode, adjust the size up to 3%.
+        if self.isFullScreen():
+            gap_x = int(round(float(self.size().width()) * 0.03))
+            gap_y = int(round(float(self.size().height()) * 0.03))
+            if abs(view_width - self.size().width()) < gap_x:
+                view_width = self.size().width()
+            if abs(view_height - self.size().height()) < gap_y:
+                view_height = self.size().height()
+        return (view_width, view_height)
+
+
+    def myMsgBoxDialog(self, title, icon, text, buttons):
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle(title)
+        dlg.setText(text)
+        dlg.setIcon(icon)
+        dlg.setStandardButtons(buttons)
+        return dlg.exec_()
+
+
+    def confirmSaveDialog(self):
+        """ Save dialog before quit """
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle(u'Save Playlist?')
+        msg = u"""Geometries may be changed. Save current playlist?"""
+        dlg.setText(msg)
+        dlg.setIcon(QMessageBox.Warning)
+        dlg.setStandardButtons(QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+        dlg.setEscapeButton(QMessageBox.Cancel)
+        dlg.setDefaultButton(QMessageBox.Yes)
+        return dlg.exec_()
+
+
+    def helpDialog(self):
+        """ Show help message box """
+        if self.read_only:
+            read_only_tip = ' (disabled)'
+        else:
+            read_only_tip = ''
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle(u'%s Help' % (APP_TITLE,))
+        msg = u"""F1 or ?\tShow this help
+F2\tShare With...
+F3\tEdit Exif UserComment tag%s
+F11 or F\tToggle fullscreen mode
++\tZoom in
+-\tZoom out
+1\tZoom to 1:1 pixel
+W\tZoom to fit image width
+H\tZoom to fit image height
+Z\tZoom-in to remove blank space
+R\tRotate image changing Exif Orientation tag%s
+Return\tAccept current geometry for image
+G\tZoom to current image geometry
+Canc\tForget current geometry (remove from playlist)
+I\tView image metadata
+D\tDelete image from filesystem%s
+Space\tGo to next image
+Backspace\tGo to previous image
+PgDown\tAdvance by 10 images
+PgUp\tBackward by 10 images
+Home\tGo to the first image
+End\tGo to the last image
+<\tShift the image backward into the playlist
+>\tShift the image forward into the playlist
+C\tToggle display of Exif UserComment
+P\tToggle autoplay
+S\tSave the playlist with updated gemetries%s
+Esc or Q\tQuit program""" % (read_only_tip, read_only_tip, read_only_tip, read_only_tip)
+        dlg.setText(msg)
+        dlg.setIcon(QMessageBox.Information)
+        dlg.setInformativeText(u'Version: %s\n%s' % (__version__, __copyright__))
+        dlg.setStandardButtons(QMessageBox.Ok)
+        dlg.setEscapeButton(QMessageBox.Ok)
+        dlg.exec_()
+
+
+    def shareDialog(self):
+        """ Show the input dialog for the Share With function """
+        dlg_title = u'%s - Share Image' % (APP_TITLE,)
+        dlg_msg = u'Share this image with:' + u' ' * 60
+        recipient, okPressed = QInputDialog.getText(self, dlg_title, dlg_msg, QLineEdit.Normal, '')
+        if okPressed and recipient != '':
+            cmd = [SHARE_COMMAND, os.path.join(self.directory, self.current_image), recipient]
+            logging.info(u'Executing: %s' % (' '.join(cmd),))
+            try:
+                ret = subprocess.call(cmd)
+            except Exception as e:
+                logging.error(u'Subprocess "%s" error: %s' % (SHARE_COMMAND, str(e),))
+
+
+    def userCommentDialog(self):
+        """ Show a dialog to edit the UserComment tag """
+        dlg_title = u'%s - Exif UserComment' % (APP_TITLE,)
+        dlg_msg = u'Modify the Exif UserComment tag:' + u' ' * 60
+        comment, okPressed = QInputDialog.getMultiLineText(self, dlg_title, dlg_msg, self.exif_usercomment)
+        comment = comment.strip()
+        if okPressed and comment != self.exif_usercomment:
+            filename = os.path.join(self.directory, self.current_image)
+            set_cmd = u'set Exif.Photo.UserComment Comment charset=Unicode %s' % (comment)
+            cmd = [EXIV2_COMMAND, '-n', 'UTF-8', '-M', set_cmd, filename]
+            logging.info(u'Executing: %s' % (' '.join(cmd),))
+            try:
+                subprocess.call(cmd)
+                if comment != '':
+                    self.exif_usercomment = comment
+                else:
+                    self.exif_usercomment = None
+                self.showImageCaption()
+            except Exception as e:
+                logging.error(u'Subprocess "%s" error: %s' % (EXIV2_COMMAND, str(e),))
+
+
+    def deleteCurrentImageFile(self):
+        """ Delete file of currently displayed image"""
+        if len(self.images_playlist) <= 1:
+            self.popup('Cannot remove the last image')
+            logging.warning('Cannot delete the last image from playlist')
+            return
+        filename = os.path.join(self.directory, self.current_image)
+        if os.path.isfile(filename):
+            logging.info(u'Removing file: %s' % (filename,))
+            os.remove(filename)
+            self.popup(u'Removed %s' % (self.current_image,))
+        else:
+            logging.error('File "%s" does not exists' % (filename,))
+            return
+        # Adjust pointers and lists (dictionaries, deque and indexes).
+        deleting = self.current_index
+        if deleting == self.first_image_index:
+            i = self.images_playlist.index(self.first_image_index) + 1
+            if i >= len(self.images_playlist):
+                i = 0
+            self.first_image_index = self.images_playlist[i]
+        if deleting == self.last_image_index:
+            i = self.images_playlist.index(self.last_image_index) - 1
+            if i < 0:
+                i = len(self.images_playlist) - 1
+            self.last_image_index = self.images_playlist[i]
+        del self.image_names[deleting]
+        del self.image_geometries[deleting]
+        self.images_playlist.remove(deleting)
+        self.current_index = self.images_playlist[0]
+        self.playlist_changed = True
+        self.nextImage(0)
+
+
+    def popup(self, msg=None):
+        """ Show a message for a short time """
+        self.popup_label.clear()
+        if msg is None:
+            self.close_popup_timer.stop()
+            self.popup_label.resize(0, 0)
+            return
+        width, height = self.calculateImageViewSize()
+        pad_x, pad_y = self.calculateImageViewPadding()
+        font_px = int(height * 0.052)
+        label_pad_x = int(font_px * 0.50)
+        label_pad_y = int(font_px * 0.10)
+        label_margin_top = int(font_px * 0.50)
+        self.popup_label.setText(msg)
+        self.popup_label.setStyleSheet(QLABEL_COMMENT_CSS % (font_px,))
+        self.popup_label.setAlignment(QtCore.Qt.AlignCenter)
+        label_w = self.popup_label.sizeHint().width() + label_pad_x * 2
+        label_h = self.popup_label.sizeHint().height() + label_pad_y * 2
+        self.popup_label.resize(label_w, label_h)
+        self.popup_label.move(width - label_w, (label_margin_top + pad_y))
+        self.close_popup_timer.start(int(POPUP_TIMEOUT * 1000))
+
+
+    def keyPressEvent(self, event):
+        """ Handle key pressed by the user """
+        # See https://doc.qt.io/qt-5/qt.html#Key-enum
+        if self.pending_delete == True:
+            """ Delete file request pending, check for confirm """
+            if event.key() == QtCore.Qt.Key_Y:
+                self.deleteCurrentImageFile()
+            self.pending_delete = False
+            self.popup()
+            return
+        if event.key() == QtCore.Qt.Key_F1 or event.key() == QtCore.Qt.Key_Question:
+            """ Show help dialog """
+            self.helpDialog()
+        elif event.key() == QtCore.Qt.Key_F2:
+            """ Show Share With dialog """
+            self.shareDialog()
+        elif event.key() == QtCore.Qt.Key_F3:
+            """ Show Edit UserComment dialog """
+            if self.read_only:
+                self.popup(u'Exif editing is disabled')
+            else:
+                self.userCommentDialog()
+        elif event.key() == QtCore.Qt.Key_F11 or event.key() == QtCore.Qt.Key_F:
+            """ Toggle fullscreen mode """
+            self.toggleFullscreen()
+        elif event.key() == QtCore.Qt.Key_1:
+            """ Zoom to 1:1 pixel """
+            self.zoomReset()
+        elif event.key() == QtCore.Qt.Key_Plus:
+            """ Zoom in """
+            self.zoomIn()
+        elif event.key() == QtCore.Qt.Key_Minus:
+            """ Zoom out """
+            self.zoomOut()
+        elif event.key() == QtCore.Qt.Key_W:
+            """ Zoom to fit image width """
+            self.fitImageWidth(fullWidth=True)
+        elif event.key() == QtCore.Qt.Key_H:
+            """ Zoom to fit image height """
+            self.fitImageHeight(fullHeight=True)
+        elif event.key() == QtCore.Qt.Key_Z:
+            """ Zoom-in to remove horizontal and vertical blank space """
+            self.fitImageWidth()
+            self.fitImageHeight()
+        elif event.key() == QtCore.Qt.Key_R:
+            """ Rotate the image by 90 degrees """
+            if self.read_only:
+                self.popup(u'Image rotating is disabled')
+            else:
+                self.imageRotate()
+        elif event.key() == QtCore.Qt.Key_I:
+            """ Print image info and window status data """
+            self.info_display = not self.info_display
+            self.showImageInfo()
+        elif event.key() == QtCore.Qt.Key_D:
+            """ Delete image file from disk """
+            if self.read_only:
+                self.popup(u'Deleting files is disabled')
+            else:
+                self.popup(u'Confirm delete? (Y/N)')
+                self.pending_delete = True;
+        elif event.key() == QtCore.Qt.Key_Return or event.key() == QtCore.Qt.Key_Enter:
+            """ Use current geometry for image """
+            self.spitImageStatus()
+            self.updateImageGeometry()
+        elif event.key() == QtCore.Qt.Key_G:
+            """ Zoom to image geometry """
+            self.zoomToGeometry()
+        elif event.key() == QtCore.Qt.Key_Delete:
+            """ Delete image geometry, image will be removed from playlist """
+            self.deleteImageGeometry()
+        elif event.key() == QtCore.Qt.Key_Space:
+            """ Go to next image """
+            self.nextImage()
+        elif event.key() == QtCore.Qt.Key_Backspace:
+            """ Go to previous image """
+            self.nextImage(-1)
+        elif event.key() == QtCore.Qt.Key_C:
+            """ Toggle Exif UserComment caption """
+            self.caption_display = not self.caption_display
+            msg = u'Show comment' if self.caption_display else u'Hide comment'
+            self.popup(msg)
+            self.showImageCaption()
+        elif event.key() == QtCore.Qt.Key_P:
+            """ Toggle autoplay of images """
+            self.toggleAutoplay()
+        elif event.key() == QtCore.Qt.Key_S:
+            """ Save the playlist with updated gemetries """
+            if not self.read_only:
+                self.popup(u'Saving playlist...')
+                self.savePlaylist()
+            else:
+                self.popup(u'Playlist saving is disabled')
+                self.force_save_cheat += 1
+                if self.force_save_cheat > CHEAT_REPEAT_KEY_COUNT:
+                    self.force_save_cheat = 0
+        elif event.key() == QtCore.Qt.Key_Y:
+            if self.read_only:
+                if self.force_save_cheat == CHEAT_REPEAT_KEY_COUNT:
+                    self.read_only = False
+                    msg = u'Read-only mode disabled!'
+                    self.popup(msg)
+                    logging.warning(msg)
+                else:
+                    self.force_save_cheat = 0
+        elif event.key() == QtCore.Qt.Key_Less:
+            """ Shift current image backward in playlist """
+            self.shiftBackward()
+        elif event.key() == QtCore.Qt.Key_Greater:
+            """ Shift current image forward in playlist """
+            self.shiftForward()
+        elif event.key() == QtCore.Qt.Key_Q or event.key() == QtCore.Qt.Key_Escape:
+            """ Quit program """
+            self.close()
+
+
+    def fitImageWidth(self, fullWidth=False):
+        """ Adjust zoom to remove horizontal blank space or to full width """
+        s = getImageState(self)
+        if fullWidth or s.geom_width > s.image_width:
+            self.zoom = float(s.view_width) / float(s.image_width)
+            self.view_hscroll = 0
+            self.view_vscroll = int(((float(s.image_height) * self.zoom) - float(s.view_height)) / 2.0)
+            self.reframeImage()
+            self.showGeometryFlag(view_moved=True)
+
+
+    def fitImageHeight(self, fullHeight=False):
+        """ Adjust zoom to remove vertical blank space or to full height """
+        s = getImageState(self)
+        if fullHeight or s.geom_height > s.image_height:
+            self.zoom = float(s.view_height) / float(s.image_height)
+            self.view_hscroll = int(((float(s.image_width) * self.zoom) - float(s.view_width)) / 2.0)
+            self.view_vscroll = 0
+            self.reframeImage()
+            self.showGeometryFlag(view_moved=True)
+
+
+    def imageRotate(self):
+        """ Update image cycling Exif Orientation tag """
+        logging.info(u'Current Exif Orientation tag = %s' % (self.exif_orientation_tag,))
+        filename = os.path.join(self.directory, self.current_image)
+        i = EXIF_ORIENTATION_TAGS.index(self.exif_orientation_tag)  + 1
+        if i >= len(EXIF_ORIENTATION_TAGS):
+            i = 0
+        new_tag = EXIF_ORIENTATION_TAGS[i]
+        #cmd = ['exiftool', '-Orientation=%d' % (new_tag,), '-n', filename]
+        cmd = [EXIV2_COMMAND, '--Modify', 'set Exif.Image.Orientation %d' % (new_tag,), filename]
+        logging.info(u'Executing: %s' % (cmd,))
+        try:
+            ret = subprocess.call(cmd)
+        except Exception as e:
+            logging.error(u'Subprocess "%s" error: %s' % (EXIV2_COMMAND, str(e),))
+            title = u'Subprocess Error'
+            text = u'Error executing external command:\n%s' % ' '.join(cmd)
+            self.myMsgBoxDialog(title, QMessageBox.Critical, text, QMessageBox.Ok)
+        self.nextImage(0)
+
+
+    def closeEvent(self, event):
+        """ Close app: stop timer, close fullscreen, ask to save """
+        self.closing_now = True
+        if self.close_popup_timer.isActive():
+            self.close_popup_timer.stop()
+        if self.timer.isActive():
+            self.timer.stop()
+        if self.isFullScreen():
+            self.toggleFullscreen()
+        # Ask to save current playlist geometries.
+        if not self.read_only and self.playlist_changed:
+            save_playlist = self.confirmSaveDialog()
+            if save_playlist == QMessageBox.Yes:
+                self.savePlaylist()
+            elif save_playlist == QMessageBox.No:
+                pass
+            else:
+                event.ignore()
+                return
+        # Re-enable screensaver.
+        self.setScreensaver(True)
+        event.accept()
+        app.exit(EXIT_CODE_QUIT)
+
+
+    def setScaleAndRotate(self):
+        """ Apply zoom and rotation to image view """
+        self.view.setTransform(QTransform().scale(self.zoom, self.zoom).rotate(self.image_rotate))
+
+
+    def reframeImage(self):
+        """ Re-frame the image upon rootation, zoom and pan values """
+        # Adjust zoom and orientation.
+        self.setScaleAndRotate()
+        # TODO: Why self.show() is required here?
+        self.show()
+        # Set scrollbars values to get proper image pan, according to geometry.
+        # For a non-rotated image, a value of (0, 0) means that the (top, left)
+        # corner of the image is inside the view, i.e. the image was not scrolled.
+        # Scrollbars values have different min/max ranges, when Exif-rotated.
+        if self.exif_orientation_tag == 8:
+            hscroll_adjusted = self.view_hscroll
+            vscroll_adjusted = self.view_vscroll - int(round(self.image_height * self.zoom))
+        elif self.exif_orientation_tag == 6:
+            hscroll_adjusted = self.view_hscroll - int(round(self.image_width * self.zoom))
+            vscroll_adjusted = self.view_vscroll
+        elif self.exif_orientation_tag == 3:
+            hscroll_adjusted = self.view_hscroll - int(round(self.image_width * self.zoom))
+            vscroll_adjusted = self.view_vscroll - int(round(self.image_height * self.zoom))
+        else:
+            hscroll_adjusted = self.view_hscroll
+            vscroll_adjusted = self.view_vscroll
+        self.view.horizontalScrollBar().setValue(hscroll_adjusted)
+        self.view.verticalScrollBar().setValue(vscroll_adjusted)
+
+
+    def zoomIn(self):
+        self.zoom *= 1.05
+        self.setScaleAndRotate()
+        self.showGeometryFlag(view_moved=True)
+
+
+    def zoomOut(self):
+        self.zoom /= 1.05
+        self.setScaleAndRotate()
+        self.showGeometryFlag(view_moved=True)
+
+
+    def zoomReset(self):
+        self.zoom = 1
+        self.setScaleAndRotate()
+        self.showGeometryFlag(view_moved=True)
+
+
+    def zoomToGeometry(self):
+        """ Re-calculate zoom and pan upon image geometry and view size """
+        logging.info(u'Restoring geometry view for "%s": %s' % (self.current_image, self.current_geometry))
+        if self.current_geometry is not None:
+            view_width, view_height = self.calculateImageViewSize()
+            w, h, x, y = self.current_geometry.replace('x', '+').split('+')
+            self.zoom = float(view_width) / float(w)
+            self.view_hscroll = int(round(float(x) * self.zoom))
+            self.view_vscroll = int(round(float(y) * self.zoom))
+            self.reframeImage()
+        self.showGeometryFlag()
+
+
+    def updateImageGeometry(self):
+        """ Update geometry{} for current image """
+        s = getImageState(self)
+        s.adjustGeometry()
+        self.current_geometry = '%dx%d+%d+%d' % (s.geom_width, s.geom_height, s.geom_x, s.geom_y)
+        self.image_geometries[self.current_index] = self.current_geometry
+        self.playlist_changed = True
+        self.showGeometryFlag()
+
+
+    def deleteImageGeometry(self):
+        """ Delete current image's entry from geometry{} """
+        if self.current_geometry is not None:
+            logging.info(u'Deleting geometry for "%s"' % (self.current_image,))
+            self.current_geometry = None
+            self.image_geometries[self.current_index] = None
+            self.playlist_changed = True
+            self.fitImageWidth(fullWidth=True)
+        self.showGeometryFlag()
+
+
+    def showGeometryFlag(self, view_moved=False):
+        """ Show the geometry state for the current image """
+        # The window background is visible as a colored border around the
+        # image (but hidden at fullscreen). The border color represents
+        # the geometry state: SET, NOTSET or CHANGED (not saved jet).
+        palette = QPalette()
+        if self.isFullScreen():
+            palette.setColor(QPalette.Background, QColor(GEOMETRY_FLAG_HIDE))
+        elif view_moved and self.current_geometry is not None:
+            palette.setColor(QPalette.Background, QColor(GEOMETRY_FLAG_CHANGED))
+        elif self.current_geometry is None:
+            palette.setColor(QPalette.Background, QColor(GEOMETRY_FLAG_NOTSET))
+        else:
+            palette.setColor(QPalette.Background, QColor(GEOMETRY_FLAG_SET))
+        self.setPalette(palette)
+
+
+    def swapImages(self, a, b):
+        """ Swap two images (actually the elements of dicts image_names and image_geometries) """
+        self.image_names[a], self.image_names[b] = self.image_names[b], self.image_names[a]
+        self.image_geometries[a], self.image_geometries[b] = self.image_geometries[b], self.image_geometries[a]
+
+
+    def shiftBackward(self):
+        """ Shift the current image one position backward into the playlist """
+        if self.shuffle:
+            logging.warning(u'Cannot shift image position in shuffle mode')
+            return
+        if len(self.images_playlist) >= 2:
+            self.swapImages(self.images_playlist[0], self.images_playlist[-1])
+            self.playlist_changed = True
+            self.nextImage(-1)
+
+
+    def shiftForward(self):
+        """ Shift the current image one position forward into the playlist """
+        if self.shuffle:
+            logging.warning(u'Cannot shift image position in shuffle mode')
+            return
+        if len(self.images_playlist) >= 2:
+            self.swapImages(self.images_playlist[0], self.images_playlist[1])
+            self.playlist_changed = True
+            self.nextImage()
+
+
+    def savePlaylist(self):
+        """ Save a new playlist file, with updated images geometries """
+        logging.info(u'Saving updated playlist "%s"' % (self.playlist,))
+        # Reset the images_playlist deque rotation to the first image.
+        current_offset = self.images_playlist.index(self.first_image_index)
+        self.images_playlist.rotate(-current_offset)
+        try:
+            with open(self.playlist, 'w') as f:
+                f.write('#EXTM3U-PHOTO-REFRAME\n')
+                for i in self.images_playlist:
+                    if self.image_geometries[i] is not None:
+                        print('%s|%s' % (self.image_names[i], self.image_geometries[i]))
+                        f.write('%s|%s\n' % (self.image_names[i], self.image_geometries[i]))
+                    else:
+                        print('%s|' % (self.image_names[i],))
+                        f.write('%s|\n' % (self.image_names[i],))
+            self.playlist_changed = False
+        except Exception as e:
+            logging.error(u'Error saving playlist: %s' % (str(e),))
+        # Rotate images_playlist to the previous position.
+        self.images_playlist.rotate(current_offset)
+
+
+    def toggleFullscreen(self):
+        if self.isFullScreen():
+            app.restoreOverrideCursor()
+            self.showNormal()
+        else:
+            app.setOverrideCursor(QCursor(QtCore.Qt.BlankCursor))
+            self.showFullScreen()
+
+
+    def toggleAutoplay(self):
+        if self.timer.isActive():
+            msg = u'Stopping autoplay'
+            self.limit_loops = 0
+            self.limit_slides = 0
+            self.timer.stop()
+        else:
+            msg = u'Starting autoplay'
+            self.timer.start(int(self.slide_time * 1000))
+        logging.info(msg)
+        self.popup(msg)
+
+
+# ------------------------------------------------------------------------
+# ------------------------------------------------------------------------
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    myMainWindow = photoReframeApp()
+    myMainWindow.spitWindowSizes()
+    # Start user interaction, then exit.
+    sys.exit(app.exec_())

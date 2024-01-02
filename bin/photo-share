@@ -1,0 +1,25 @@
+#!/bin/sh
+
+IMAGE="$1"
+RECIPIENT="$2"
+
+if [ -z "$IMAGE" -o -z "$RECIPIENT" ]; then
+    echo "Usage: $(basename $0) [FILE] [EMAIL_ADDRESS]"
+    exit 1
+fi
+if [ ! -f "$IMAGE" ]; then
+    echo "ERROR: File \"$IMAGE\" does not exists."
+    exit 1
+fi
+
+# The command will be executed in background.
+shipmail-ng \
+    --smtp='mail.server.tld:587' --starttls \
+    -u 'login_name' -p 'password' \
+    --me='digital.frame@rigacci.org' \
+    --mn='Digital Frame Rigacci.Org' \
+    --de="$RECIPIENT" \
+    -s 'Image from Open Digital Frame' \
+    -f /dev/null \
+    -a "$IMAGE" \
+    </dev/null &>/dev/null &
