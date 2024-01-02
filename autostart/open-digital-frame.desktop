@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Open Digital Frame
+Exec=/usr/local/bin/open-digital-frame
+Icon=image-x-generic
+Type=Application
+Categories=Utility;

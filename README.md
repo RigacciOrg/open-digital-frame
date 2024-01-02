@@ -3,7 +3,22 @@ Software to create a digital photo frame: browse image directories and do slides
 
 ## Directory nfo file
 
+The directory browser of Open Digital Frame searches for a 
+**folder.nfo** file into each subdirectory. The file is a simple 
+XML file that may contains some tags; these tags are used to 
+compose the thumbnails screen, to sort items and to select 
+playlists to play by tags.
+
+This is an example:
+
 ```
+<slideshow>
+    <title>Libera Università di Alcatraz - Luglio 2012</title>
+    <sorttitle>2012_07_16_</sorttitle>
+    <tag>Family</tag>
+    <tag>Holydays</tag>
+    <date>2012-07-16</date>
+</slideshow>
 ```
 
 ## Playlist Format
