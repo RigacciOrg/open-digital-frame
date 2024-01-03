@@ -1,18 +1,33 @@
 # -*- coding: utf-8 -*-
 """
-Open Digital Frame
+Open Digital Frame -- Directory browser for a digital frame
+
+Browse a tree of directories containing images and playlist 
+files. The directories are represented in a scrollable window, 
+each with a thumbnail and a title. The thumbnail is taken from a 
+folder.jpg file and some metadata are read from a folder.nfo 
+file.
+
+If a directory contains a playlist file (playlist_16x9.m3u, 
+playlist.m3u, ...), selecting its thumbnail will start the 
+slideshow using the photo-reframe companion program.
 """
 
 from PyQt5.QtCore import (
     Qt,
     QSize,
     QEvent,
+    QMutex,
     QObject,
     QRect,
     QThread,
-    pyqtSignal
-)
-from PyQt5.QtGui import QCursor, QPixmap
+    QTimer,
+    pyqtSignal)
+from PyQt5.QtGui import (
+    QCursor,
+    QPixmap,
+    QFont,
+    QFontMetrics)
 from PyQt5.QtWidgets import (
     QApplication,
     QFrame,
@@ -22,8 +37,7 @@ from PyQt5.QtWidgets import (
     QScrollArea,
     QSpacerItem,
     QVBoxLayout,
-    QWidget
-)
+    QWidget)
 import xml.etree.ElementTree as ET
 
 import configparser
@@ -44,11 +58,11 @@ __author__ = "Niccolo Rigacci"
 __copyright__ = "Copyright 2023 Niccolo Rigacci <niccolo@rigacci.org>"
 __license__ = "GPLv3-or-later"
 __email__ = "niccolo@rigacci.org"
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.DEBUG)
 
-# Initialize defaults and reat the configuration file.
+# Initialize defaults and read the configuration file.
 CFG_FILE = 'open-digital-frame.ini'
 if len(sys.argv) > 1:
     CFG_FILE = sys.argv[1]
@@ -58,12 +72,13 @@ cfg['DEFAULT'] = {
     'lbl_title_prefix': 'Digital Frame',
     'lbl_sort_by': 'Sort by',
     'lbl_reverse': 'rev.',
-    'skin': 'open_digital_frame.resources.lib.skin_default',
+    'skin': 'open_digital_frame.resources.addons.skin_default',
     'pictures_root': '',
     'player_cmd': "photo-reframe --fullscreen --play --timer 5 --read-only {f}",
     'folder_thumbnails': '["folder.jpg", "folder.png"]',
     'folder_playlists': '["playlist_16x9.m3u", "playlist_4x3.m3u", "playlist.m3u"]',
-    'sort_keys': '["sorttitle", "date", "title"]'
+    'sort_keys': '["sorttitle", "date", "title"]',
+    'auto_play': ''
 }
 cfg['App'] = {}
 cfg.read(CFG_FILE)
@@ -85,6 +100,8 @@ try:
     FOLDER_THUMBNAILS = json.loads(cfg['App']['folder_thumbnails'])
     # List of keys (from nfo files) that can be used for sorting.
     SORT_KEYS = json.loads(cfg['App']['sort_keys'])
+    # Playlist to play on start, relative to pictures_root.
+    AUTO_PLAY = cfg['App']['auto_play']
 except Exception as ex:
     logging.error('Cannot parse configuration file "%s": %s' % (CFG_FILE, str(ex)))
     sys.exit(1)
@@ -97,6 +114,14 @@ if PICTURES_ROOT is None or PICTURES_ROOT == '':
     if 'HOME' in os.environ:
         PICTURES_ROOT = os.path.join(os.environ['HOME'], 'Pictures')
 
+# If autoplay is requested, check if the file esists.
+AUTO_PLAYLIST = None
+if AUTO_PLAY != '':
+    AUTO_PLAYLIST = os.path.join(PICTURES_ROOT, AUTO_PLAY)
+    if not os.path.exists(AUTO_PLAYLIST):
+        logging.warning('Playlist does not exists: "%s"' % (AUTO_PLAYLIST))
+        AUTO_PLAYLIST = None
+
 
 class Worker(QObject):
 
@@ -104,8 +129,10 @@ class Worker(QObject):
     finished = pyqtSignal()
 
     def run(self):
-        """Long-running task."""
-        # Ensure that the wait icon is visible, even .
+        """ Call the MainWindow.refreshUI() long-running task """
+        # NOTICE: Wait some time to ensure that the wait icon is visible.
+        # This sleep is actually required only during the MainWindow.__init__()
+        # when the call to self.app.processEvents() does not work.
         time.sleep(0.10)
         self.refresh_ui.emit()
         self.finished.emit()
@@ -128,12 +155,20 @@ class MainWindow(QMainWindow):
         self.app = QApplication.instance()
         self.screen_width = self.app.primaryScreen().size().width()
         self.screen_height = self.app.primaryScreen().size().height()
-        logging.debug('Screen size: %dx%d' % (self.screen_width, self.screen_height))
+        logging.info('Screen size: %dx%d' % (self.screen_width, self.screen_height))
 
         # The skin parameters are defined and calculated by a separate module.
-        logging.debug('Importing module "%s"' % (SKIN,))
+        logging.info('Importing skin module "%s"' % (SKIN,))
         skin_mod = importlib.import_module(SKIN)
         self.skin = skin_mod.skin(screen_width=self.screen_width)
+
+        # Calculate the QFontMetrics for the thumbnails captions.
+        weight_map = {'Thin': QFont.Thin, 'ExtraLight': QFont.ExtraLight, 'Light': QFont.Light, 'Normal': QFont.Normal, 'Medium': QFont.Medium, 'DemiBold': QFont.DemiBold, 'Bold': QFont.Bold, 'ExtraBold': QFont.ExtraBold, 'Black': QFont.Black}
+        font = self.font()
+        font.setFamily(self.skin.ITEM_CAPTION_FONT_FAMILY)
+        font.setWeight(weight_map[self.skin.ITEM_CAPTION_FONT_WEIGHT])
+        font.setPixelSize(self.skin.ITEM_CAPTION_FONT_SIZE)
+        self.caption_font_metrics = QFontMetrics(font)
 
         # Place the window (normal size) into the desktop available space.
         desktop_width = self.app.desktop().availableGeometry().width()
@@ -141,24 +176,58 @@ class MainWindow(QMainWindow):
         logging.debug('Desktop size: %dx%d' % (desktop_width, desktop_height))
         self.setGeometry(int(desktop_width * 0.01), int(desktop_height * 0.06), int(desktop_width * 0.64), int(desktop_height * 0.68))
 
-        self.focused_item_in_dir = {}
         self.toggleFullscreen()
+        self.main_window_refresh_mutex = QMutex()
+
+        # Set initial directory and initial focused item.
+        self.focused_item_in_dir = {}
+        if AUTO_PLAYLIST is not None:
+            dir_name = os.path.dirname(AUTO_PLAYLIST)
+            current_path = os.path.dirname(dir_name)
+            self.focused_item_in_dir[current_path] = os.path.basename(dir_name)
+            # The autoplay will wait this mutex lock before start.
+            self.main_window_refresh_mutex.lock()
+            # Allow 1000 ms before trying the autoplay.
+            self.timer = QTimer()
+            self.timer.singleShot(1000, self.autoPlay)
+        else:
+            current_path = PICTURES_ROOT
 
         # Within __init__() the scroll area is used just to display the wait icon.
         self.scroll = QScrollArea()
         self.setCentralWidget(self.scroll)
-        self.initUI(PICTURES_ROOT)
+        self.initUI(current_path)
+
+
+    def autoPlay(self):
+        """ Start the autoplay of the requested playlist """
+        logging.debug('Check if MainWindow() refresh is complete before starting autoplay')
+        # Wait max 100 ms for the MainWindow refresh mutex is released.
+        if self.main_window_refresh_mutex.tryLock(100):
+            self.main_window_refresh_mutex.unlock()
+            logging.info('Starting autoplay')
+            self.selectItem(self.focused_item)
+        else:
+            logging.debug('MainWindow refresh is not complete: delay the autoplay by 1 sec.')
+            self.timer.singleShot(1000, self.autoPlay)
 
 
     def initUI(self, path):
         """ Display the wait icon and start a new thread to refresh the UI """
+        # The mutex lock is used to indicate that the UI refresh is running.
+        self.main_window_refresh_mutex.tryLock()
         self.current_path = path
         # Show a shadow background and the wait icon.
+        # Actually we use a trick to hide the wait icon; after the icon is
+        # displayed, the UI starts to redreaw almost immediately, but the
+        # screen is not refreshed untill the function is completed.
+        # When finally the screen is refreshed, the wait icon does not
+        # longer exists, so it disappears.
         icon = QPixmap(self.skin.ICON_WAIT).scaled(self.skin.THUMB_WIDTH, self.skin.THUMB_HEIGHT, aspectRatioMode=Qt.KeepAspectRatio, transformMode=Qt.SmoothTransformation)
         dim_background = QLabel(self.scroll)
         dim_background.move(0, 0)
         dim_background.resize(self.screen_width, self.screen_height)
-        dim_background.setStyleSheet('background-color: rgba(0, 0, 0, 128);')
+        dim_background.setStyleSheet(self.skin.STYLE_WAIT_BACKGROUND)
         dim_background.setHidden(False)
         wait_icon = QLabel(self.scroll)
         wait_icon.setPixmap(icon)
@@ -166,7 +235,7 @@ class MainWindow(QMainWindow):
         wait_icon.setHidden(False)
         # Force GUI refresh (not working during the first __init__() execution).
         self.app.processEvents()
-        # Create a new thread.
+        # Create a new thread to call the refreshUI().
         # https://realpython.com/python-pyqt-qthread/
         self.thread = QThread()
         self.worker = Worker()
@@ -252,9 +321,9 @@ class MainWindow(QMainWindow):
             item_caption.setStyleSheet(self.skin.STYLE_TEXT_LABEL)
             item_caption.setWordWrap(True)
             item_caption.setAlignment(Qt.AlignCenter)
-            # Get the size of the rectangle containing the text label.
-            rect = self.app.fontMetrics().boundingRect(QRect(0, 0, self.skin.THUMB_WIDTH, self.skin.CAPTION_HEIGHT), Qt.TextWordWrap, item_caption.text())
-            # TODO: Should call adjustSize()?
+            # Get the size of the rectangle required to contain the label.
+            rect = self.caption_font_metrics.boundingRect(QRect(0, 0, self.skin.THUMB_WIDTH, self.skin.CAPTION_HEIGHT), Qt.TextWordWrap, item_caption.text())
+            # If caption height is more than the allowed space, align to top.
             if rect.height() > self.skin.CAPTION_HEIGHT:
                 item_caption.setAlignment(Qt.AlignHCenter)
 
@@ -343,6 +412,8 @@ class MainWindow(QMainWindow):
         # Set the actual UI focus and the "logical" focus.
         self.widget.setFocus()
         self.moveFocus(index_to_focus)
+        # UI refresh is complete, release the mutex lock.
+        self.main_window_refresh_mutex.unlock()
 
 
     def moveFocus(self, new_index):
@@ -568,7 +639,7 @@ def playlist_length(playlist):
 def main():
     app = QApplication(sys.argv)
     main = MainWindow()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 
 
 if __name__ == '__main__':
