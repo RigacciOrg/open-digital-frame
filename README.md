@@ -24,6 +24,17 @@ as an autostart program, it is also possible to configure a
 playlist as an autoplay item, so that a slideshow can start 
 automatically when you turn on the system.
 
+## Additiona Debian packages required
+
+Open Digital Frame was tested on the **Raspberry Pi OS with desktop**,
+Debian version 12 Bookworm, release date December 5th 2023. Some 
+additional packages are required, install them as root or using 
+sudo:
+
+```
+apt install python3-pyqt5 exiv2
+```
+
 ## The directory folder.nfo file
 
 The directory browser of Open Digital Frame searches for a 
@@ -83,3 +94,27 @@ the slideshow, and it is composed by four values:
 * **Y offset** of the top-left corner of the region
 
 The cropped region is resized to occupy the entire screen.
+
+The playlist file can be created manually, but the preferred way 
+is to use the **photo-reframe** program interactively: using a 
+keyboard you can cycle through all the images contained into a 
+directory, zoom and pan each photo as required and finally save 
+the updated playlist. Here it is an example:
+
+```
+cd Picture/Holydays
+photo-reframe .
+```
+The keys to use are:
+
+* **F** or **F11**: to toggle full screen
+* **+** or **-**: zoom in or out
+* **Arrows keys**: pan
+* **Return**: confirm the geometry for the current image
+* **Space**: move to the next image
+* **Backspace**: move to the previous image
+* **S**: save the playlist
+* **F1**: help on keys function
+
+If you re-run the program, the existing playlist is loaded and 
+it is possible to make further changes to it.
