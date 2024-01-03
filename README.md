@@ -4,8 +4,9 @@
 
 Open Digital Frame is a collection of Python programs and shell 
 scripts to turn a GNU/Linux box into a digital photo frame. It 
-was developed on a Raspberry Pi version 2, so it should run 
-smoothly on very low-end hardware.
+was developed on a **Raspberry Pi version 2**, so it should run 
+smoothly on very low-end hardware. Any GNU/Linux installation 
+providing **Python 3** should be compatible with this software.
 
 It consists mainly of two programs: **open-digital-frame** and 
 **photo-reframe**. The first is a directory browser, where the 
@@ -24,10 +25,22 @@ as an autostart program, it is also possible to configure a
 playlist as an autoplay item, so that a slideshow can start 
 automatically when you turn on the system.
 
+## Additional Debian packages required
+
+Open Digital Frame was tested on the **Raspberry Pi OS 
+desktop**, version Debian 12 Bookworm, release date December 5th 
+2023. Beside the default installation of the operating system, 
+some additional packages are required. Install them as root or 
+using sudo:
+
+```
+apt install python3-pyqt5 exiv2
+```
+
 ## Installation
 
-As root execute the following commands:
-
+To download and install Open Digital Frame, execute the 
+following commands as root:
 
 ```
 cd /usr/local/src
@@ -41,18 +54,6 @@ Several files are copied into the directories:
 
 * **/usr/local/bin/**
 * **/usr/local/lib/python3.11/dist-packages/open_digital_frame/**
-
-
-## Additional Debian packages required
-
-Open Digital Frame was tested on the **Raspberry Pi OS with desktop**,
-Debian version 12 Bookworm, release date December 5th 2023. Some 
-additional packages are required, install them as root or using 
-sudo:
-
-```
-apt install python3-pyqt5 exiv2
-```
 
 ## The directory folder.nfo file
 
