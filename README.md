@@ -24,7 +24,27 @@ as an autostart program, it is also possible to configure a
 playlist as an autoplay item, so that a slideshow can start 
 automatically when you turn on the system.
 
-## Additiona Debian packages required
+## Installation
+
+As root execute the following commands:
+
+
+```
+cd /usr/local/src
+git clone https://github.com/RigacciOrg/open-digital-frame.git
+cd open-digital-frame
+make install
+make install-utils
+make 
+```
+
+Several files are copied into the directories:
+
+* **/usr/local/bin/**
+* **/usr/local/lib/python3.11/dist-packages/open_digital_frame/**
+
+
+## Additional Debian packages required
 
 Open Digital Frame was tested on the **Raspberry Pi OS with desktop**,
 Debian version 12 Bookworm, release date December 5th 2023. Some 
@@ -55,13 +75,13 @@ This is an example:
 </slideshow>
 ```
 
-## The directory thumbnail
+## The directory thumbnails
 
 If a directory contains a **folder.jpg** or **folder.png**, that 
 image is used as a thumbnails into the Open Digital Frame 
 directory browser.
 
-## The playlist.m3u file format
+## How to create the playlist_16x9.m3u files
 
 The playlist is a text file saved into the directory that
 contains the images. The default, preferred name is
@@ -69,7 +89,7 @@ contains the images. The default, preferred name is
 **playlist_4x3.m3u** and **playlist.m3u**.
 
 You can set the playlist filename preferences into the
-configuration file.
+open-digital-frame configuration file.
 
 The playlist contains the filename of the images and their
 respective geometries, separated by a vertical bar, something
