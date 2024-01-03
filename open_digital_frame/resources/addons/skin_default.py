@@ -35,11 +35,10 @@ class skin():
         self.ICON_DEFAULT_FOLDER = os.path.join(res_img, 'DefaultFolder43.png')
         self.ICON_DEFAULT_FOLDER_BACK = os.path.join(res_img, 'DefaultFolderBack43.png')
         self.ICON_BROKEN_IMAGE = os.path.join(res_img, 'broken-photo.png')
-        # Top window title elements.
-        self.GRADIENT_IMAGE = os.path.join(res_img, 'osdfade.png')
         self.ICON_WAIT = os.path.join(res_img, 'DefaultAddonsUpdates.png')
+        self.ICON_PLAYABLE = os.path.join(res_img, 'DefaultPlaylist.png')
 
-        # The QGridLayout have style margin and spacing that cannot be reduced or removed.
+        # The QGridLayout have fixed style margin and spacing that cannot be reduced or removed.
         self.GRID_FIXED_MARGIN = 9
         self.GRID_FIXED_SPACING = 1
 
@@ -57,7 +56,8 @@ class skin():
         # Thumbnails caption height.
         self.CAPTION_HEIGHT = int(self.THUMB_HEIGHT * 0.25)
 
-        # Main window title sizes.
+        # Main window title.
+        self.GRADIENT_IMAGE = os.path.join(res_img, 'osdfade.png')
         self.GRADIENT_HEIGHT = int(self.THUMB_HEIGHT * 0.80)
         self.FONT_SIZE_TITLE = self.THUMB_HEIGHT // 5
         self.FONT_SIZE_SUBTITLE = self.THUMB_HEIGHT // 7
@@ -75,6 +75,7 @@ class skin():
         self.ITEM_CAPTION_HEIGHT_FOCUSED = self.CAPTION_HEIGHT + self.THUMB_BORDER_SIZE_FOCUSED
         self.CELL_MIN_WIDTH = self.THUMB_WIDTH_FOCUSED + self.THUMB_BORDER_SIZE_FOCUSED * 2 + 2
         self.CELL_MIN_HEIGHT = self.THUMB_HEIGHT_FOCUSED + self.THUMB_BORDER_SIZE_FOCUSED * 2 + self.THUMB_BORDER_SIZE + self.CAPTION_HEIGHT + 2
+        self.ICON_PLAYABLE_SIZE = int(self.THUMB_WIDTH_FOCUSED / 4.2)
 
         # CSS styles.
         self.STYLE_GRID = 'background-color: %s;' % (self.GRID_BACKGROUND,) 
@@ -85,5 +86,6 @@ class skin():
         self.STYLE_WINDOW_TITLE = 'font-family: %s; color: %s; font-weight: %s; font-size: %dpx; padding: 10px;' % (self.ITEM_CAPTION_FONT_FAMILY, self.ITEM_CAPTION_COLOR, self.TITLE_FONT_WEIGHT, self.FONT_SIZE_TITLE)
         self.STYLE_WINDOW_SUBTITLE = 'font-family: %s; color: %s; font-weight: %s; font-size: %dpx; padding: 10px;' % (self.ITEM_CAPTION_FONT_FAMILY, self.ITEM_CAPTION_COLOR, self.TITLE_FONT_WEIGHT, self.FONT_SIZE_SUBTITLE)
         self.STYLE_WAIT_BACKGROUND = 'background-color: rgba(0, 0, 0, 160);'
+        self.STYLE_ICON_PLAYABLE = 'border-width: 0; background-color: rgba(0, 0, 0, 0);'
 
         #print('THUMB_FOCUSED: %d x %d, THUMB: %d x %d, GRID_HORIZONTAL_MARGIN: %d, GRID_ITEM_SPACING %d, THUMB_BORDER_SIZE %d, CAPTION_HEIGHT: %d' % (THUMB_WIDTH_FOCUSED, THUMB_HEIGHT_FOCUSED, THUMB_WIDTH, THUMB_HEIGHT, GRID_HORIZONTAL_MARGIN, GRID_ITEM_SPACING, THUMB_BORDER_SIZE, CAPTION_HEIGHT))

@@ -72,7 +72,7 @@ cfg['DEFAULT'] = {
     'lbl_title_prefix': 'Digital Frame',
     'lbl_sort_by': 'Sort by',
     'lbl_reverse': 'rev.',
-    'skin': 'open_digital_frame.resources.addons.skin_default',
+    'skin': 'skin_default',
     'pictures_root': '',
     'player_cmd': "photo-reframe --fullscreen --play --timer 5 --read-only {f}",
     'folder_thumbnails': '["folder.jpg", "folder.png"]',
@@ -158,8 +158,9 @@ class MainWindow(QMainWindow):
         logging.info('Screen size: %dx%d' % (self.screen_width, self.screen_height))
 
         # The skin parameters are defined and calculated by a separate module.
-        logging.info('Importing skin module "%s"' % (SKIN,))
-        skin_mod = importlib.import_module(SKIN)
+        skin_path = 'open_digital_frame.resources.addons.' + SKIN
+        logging.info('Importing skin module "%s"' % (skin_path,))
+        skin_mod = importlib.import_module(skin_path)
         self.skin = skin_mod.skin(screen_width=self.screen_width)
 
         # Calculate the QFontMetrics for the thumbnails captions.
@@ -262,6 +263,9 @@ class MainWindow(QMainWindow):
         # Install event filter to catch key presses.
         self.scroll.installEventFilter(self)
 
+        # Prepare the "playable" icon.
+        playable_pixmap = QPixmap(self.skin.ICON_PLAYABLE).scaled(self.skin.ICON_PLAYABLE_SIZE, self.skin.ICON_PLAYABLE_SIZE, aspectRatioMode=Qt.KeepAspectRatio, transformMode=Qt.SmoothTransformation)
+
         # Get the dir_items: a dictionary where the keys are the directory
         # names and each element is a dictionary of nfo elements.
         dir_items = read_directory_nfo(self.current_path)
@@ -326,6 +330,13 @@ class MainWindow(QMainWindow):
             # If caption height is more than the allowed space, align to top.
             if rect.height() > self.skin.CAPTION_HEIGHT:
                 item_caption.setAlignment(Qt.AlignHCenter)
+
+            # If exists a playlist, show the "playable" icon.
+            if 'playlist' in dir_item and dir_item['playlist'] is not None:
+                slideshow_icon = QLabel(item_pixmap)
+                slideshow_icon.setPixmap(playable_pixmap)
+                slideshow_icon.setStyleSheet(self.skin.STYLE_ICON_PLAYABLE)
+                slideshow_icon.move(0, 0)
 
             item_layout.addStretch()
             item_layout.addWidget(item_pixmap, alignment=Qt.AlignCenter)
