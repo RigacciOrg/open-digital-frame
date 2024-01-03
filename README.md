@@ -1,6 +1,28 @@
 # Open Digital Frame
 
-Software to create a digital photo frame: browse image directories and do slideshows with image panning and cropping on-the-fly
+**Software to create a digital photo frame: browse image directories and do slideshows with image panning and cropping on-the-fly**
+
+Open Digital Frame is a collection of Python programs and shell 
+scripts to turn a GNU/Linux box into a digital photo frame. It 
+was developed on a Raspberry Pi version 2, so it should run 
+smoothly on very low-end hardware.
+
+It consists mainly of two programs: **open-digital-frame** and 
+**photo-reframe**. The first is a directory browser, where the 
+directories are listed into a scrollable window, each with its 
+thumbnail and title. The thumbnail is taken from a _folder.jpg_ 
+file and some metadata are read from a _folder.nfo_ file.
+
+If a directory contains a **playlist.m3u** file and its 
+thumbnail is selected, the **photo-reframe** program is started. 
+This program will display each image listed into the playlist, 
+performing panning and zooming on the fly as instructed by the 
+playlist itself.
+
+The directory browser **open-digital-frame** can be configured 
+as an autostart program, it is also possible to configure a 
+playlist as an autoplay item, so that a slideshow can start 
+automatically when you turn on the system.
 
 ## The directory folder.nfo file
 
