@@ -60,7 +60,25 @@ __license__ = "GPLv3-or-later"
 __email__ = "niccolo@rigacci.org"
 __version__ = "0.2.1"
 
-logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.DEBUG)
+
+# Some useful mappings from string to values.
+map_logging = {
+    'DEBUG': logging.DEBUG,
+    'INFO': logging.INFO,
+    'WARNING': logging.WARNING,
+    'ERROR': logging.ERROR,
+    'CRITICAL': logging.CRITICAL }
+
+map_weight = {
+    'Thin': QFont.Thin,
+    'ExtraLight': QFont.ExtraLight,
+    'Light': QFont.Light,
+    'Normal': QFont.Normal,
+    'Medium': QFont.Medium,
+    'DemiBold': QFont.DemiBold,
+    'Bold': QFont.Bold,
+    'ExtraBold': QFont.ExtraBold,
+    'Black': QFont.Black }
 
 # Initialize defaults and read the configuration file.
 CFG_FILE = 'open-digital-frame.ini'
@@ -78,10 +96,18 @@ cfg['DEFAULT'] = {
     'folder_thumbnails': '["folder.jpg", "folder.png"]',
     'folder_playlists': '["playlist_16x9.m3u", "playlist_4x3.m3u", "playlist.m3u"]',
     'sort_keys': '["sorttitle", "date", "title"]',
-    'auto_play': ''
+    'auto_play': '',
+    'logging_level': 'INFO'
 }
 cfg['App'] = {}
 cfg.read(CFG_FILE)
+
+# Define the logging level.
+try:
+    LOG_LEVEL = map_logging[cfg['App']['logging_level']]
+except:
+    LOG_LEVEL = map_logging['INFO']
+logging.basicConfig(format='%(levelname)s: %(message)s', level=LOG_LEVEL)
 
 try:
     # Default pictures directory.
@@ -164,10 +190,9 @@ class MainWindow(QMainWindow):
         self.skin = skin_mod.skin(screen_width=self.screen_width)
 
         # Calculate the QFontMetrics for the thumbnails captions.
-        weight_map = {'Thin': QFont.Thin, 'ExtraLight': QFont.ExtraLight, 'Light': QFont.Light, 'Normal': QFont.Normal, 'Medium': QFont.Medium, 'DemiBold': QFont.DemiBold, 'Bold': QFont.Bold, 'ExtraBold': QFont.ExtraBold, 'Black': QFont.Black}
         font = self.font()
         font.setFamily(self.skin.ITEM_CAPTION_FONT_FAMILY)
-        font.setWeight(weight_map[self.skin.ITEM_CAPTION_FONT_WEIGHT])
+        font.setWeight(map_weight[self.skin.ITEM_CAPTION_FONT_WEIGHT])
         font.setPixelSize(self.skin.ITEM_CAPTION_FONT_SIZE)
         self.caption_font_metrics = QFontMetrics(font)
 

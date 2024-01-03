@@ -64,7 +64,8 @@ class skin():
 
         # Grid items size.
         self.ITEM_CAPTION_FONT_SIZE = int(self.CAPTION_HEIGHT * 0.85) // 2
-        self.ITEM_CAPTION_PADDING_FOCUSED = (self.THUMB_WIDTH_FOCUSED - self.THUMB_WIDTH) // 2
+        self.ITEM_CAPTION_PAD_FOCUSED_L = (self.THUMB_WIDTH_FOCUSED - self.THUMB_WIDTH) // 2
+        self.ITEM_CAPTION_PAD_FOCUSED_R = self.THUMB_WIDTH_FOCUSED - self.THUMB_WIDTH - self.ITEM_CAPTION_PAD_FOCUSED_L
         self.ITEM_PIXMAP_WIDTH = self.THUMB_WIDTH + self.THUMB_BORDER_SIZE * 2
         self.ITEM_PIXMAP_HEIGHT = self.THUMB_HEIGHT + self.THUMB_BORDER_SIZE * 2
         self.ITEM_PIXMAP_WIDTH_FOCUSED = self.THUMB_WIDTH_FOCUSED + self.THUMB_BORDER_SIZE_FOCUSED * 2
@@ -82,7 +83,7 @@ class skin():
         self.STYLE_PIXMAP_LABEL = 'background-color: %s; border: %dpx solid %s;' % (self.ITEM_BACKGROUND, self.THUMB_BORDER_SIZE, self.ITEM_BORDER_COLOR)
         self.STYLE_PIXMAP_LABEL_FOCUSED = 'background-color: %s; border: solid %s; border-width: %dpx %dpx %dpx %dpx;' % (self.ITEM_FOCUSED_BACKGROUND, self.ITEM_FOCUSED_BORDER_COLOR, self.THUMB_BORDER_SIZE_FOCUSED, self.THUMB_BORDER_SIZE_FOCUSED, self.THUMB_BORDER_SIZE, self.THUMB_BORDER_SIZE_FOCUSED)
         self.STYLE_TEXT_LABEL = 'font-family: %s; color: %s; background-color: %s; font-weight: %s; font-size: %dpx; border: solid %s; border-width : 0px %dpx %dpx %dpx' % (self.ITEM_CAPTION_FONT_FAMILY, self.ITEM_CAPTION_COLOR, self.ITEM_BACKGROUND, self.ITEM_CAPTION_FONT_WEIGHT, self.ITEM_CAPTION_FONT_SIZE, self.ITEM_BORDER_COLOR, self.THUMB_BORDER_SIZE, self.THUMB_BORDER_SIZE, self.THUMB_BORDER_SIZE)
-        self.STYLE_TEXT_LABEL_FOCUSED = 'font-family: %s; color: %s; background-color: %s; font-weight: %s; font-size: %dpx; border: solid %s; border-width: 0px %dpx %dpx %dpx; padding: 0px %dpx 0px %dpx;' % (self.ITEM_CAPTION_FONT_FAMILY, self.ITEM_CAPTION_COLOR, self.ITEM_FOCUSED_BACKGROUND, self.ITEM_CAPTION_FONT_WEIGHT, self.ITEM_CAPTION_FONT_SIZE, self.ITEM_FOCUSED_BORDER_COLOR, self.THUMB_BORDER_SIZE_FOCUSED, self.THUMB_BORDER_SIZE_FOCUSED, self.THUMB_BORDER_SIZE_FOCUSED, self.ITEM_CAPTION_PADDING_FOCUSED, self.ITEM_CAPTION_PADDING_FOCUSED)
+        self.STYLE_TEXT_LABEL_FOCUSED = 'font-family: %s; color: %s; background-color: %s; font-weight: %s; font-size: %dpx; border: solid %s; border-width: 0px %dpx %dpx %dpx; padding: 0px %dpx 0px %dpx;' % (self.ITEM_CAPTION_FONT_FAMILY, self.ITEM_CAPTION_COLOR, self.ITEM_FOCUSED_BACKGROUND, self.ITEM_CAPTION_FONT_WEIGHT, self.ITEM_CAPTION_FONT_SIZE, self.ITEM_FOCUSED_BORDER_COLOR, self.THUMB_BORDER_SIZE_FOCUSED, self.THUMB_BORDER_SIZE_FOCUSED, self.THUMB_BORDER_SIZE_FOCUSED, self.ITEM_CAPTION_PAD_FOCUSED_L, self.ITEM_CAPTION_PAD_FOCUSED_R)
         self.STYLE_WINDOW_TITLE = 'font-family: %s; color: %s; font-weight: %s; font-size: %dpx; padding: 10px;' % (self.ITEM_CAPTION_FONT_FAMILY, self.ITEM_CAPTION_COLOR, self.TITLE_FONT_WEIGHT, self.FONT_SIZE_TITLE)
         self.STYLE_WINDOW_SUBTITLE = 'font-family: %s; color: %s; font-weight: %s; font-size: %dpx; padding: 10px;' % (self.ITEM_CAPTION_FONT_FAMILY, self.ITEM_CAPTION_COLOR, self.TITLE_FONT_WEIGHT, self.FONT_SIZE_SUBTITLE)
         self.STYLE_WAIT_BACKGROUND = 'background-color: rgba(0, 0, 0, 160);'
