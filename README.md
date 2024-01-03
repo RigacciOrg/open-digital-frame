@@ -35,7 +35,6 @@ git clone https://github.com/RigacciOrg/open-digital-frame.git
 cd open-digital-frame
 make install
 make install-utils
-make 
 ```
 
 Several files are copied into the directories:
