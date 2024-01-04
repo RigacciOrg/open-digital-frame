@@ -37,6 +37,7 @@ should contain a _folder.nfo_ file with the metadata.
 file (there is a playlist symbol on the thumbnail).
 
 ![Screenshot of the directory browser.](/screenshots/odf-browser.png)
+**Screenshot of the directory browser.**
 
 ### photo-reframe features
 
@@ -52,7 +53,8 @@ settings) over the image.
 * Stop the slideshow to change zoom and pan interactively.
 * Update the playlist using the new framing settings.
 
-![Slideshow with Exif metadata overlay](/screenshots/photo-reframe-exif-metadata.png)
+![Slideshow with Exif metadata overlay.](/screenshots/photo-reframe-exif-metadata.png)
+**Slideshow with Exif metadata overlay.**
 
 ## Operating system and additional packages required
 
