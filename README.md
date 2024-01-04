@@ -6,25 +6,25 @@
 shell scripts to turn a GNU/Linux box into a digital photo 
 frame. It was developed on a **Raspberry Pi version 2**, so it 
 should run smoothly on very low-end hardware. Any GNU/Linux 
-installation providing **Python 3** should be compatible with 
-this software.
+installation providing the **Python 3** interpreter and the 
+**Qt5** library should be compatible with this software.
 
 The project consists mainly of two programs: 
-**open-digital-frame** and **photo-reframe**. The first is a 
+**open-digital-frame** and **photo-reframe**. The first one is a 
 directory browser, where the directories are listed into a 
 scrollable window, each with its thumbnail and title. The 
 thumbnail is taken from a _folder.jpg_ file and metadata are 
 read from a _folder.nfo_ file.
 
 If a directory contains a **playlist.m3u** file and its 
-thumbnail is selected, the **photo-reframe** program is started. 
-This program will display each image listed into the playlist, 
-performing panning and zooming on the fly as instructed by the 
-playlist itself.
+thumbnail is selected (hit the Return key or double click), the 
+**photo-reframe** program is started. This program will display 
+each image listed into the playlist, performing panning and 
+zooming on the fly as instructed by the playlist itself.
 
 The directory browser **open-digital-frame** can be configured 
 as an autostart program, it is also possible to configure a 
-playlist as an autoplay item, so that a slideshow can start 
+playlist as an autoplay item, so that the slideshow can start 
 automatically when you turn on the system.
 
 ### open-digital-frame features
@@ -34,7 +34,7 @@ titles.
 * Sort by sorttitle, directory name or data. Each subdirectory 
 should contain a _folder.nfo_ file with the metadata.
 * Launch the slideshow if a directory contains a _playlist.m3u_ 
-file.
+file (there is a playlist symbol on the thumbnail).
 
 ![Screenshot of the directory browser.](/screenshots/odf-browser.png)
 
@@ -52,7 +52,7 @@ settings) over the image.
 * Stop the slideshow to change zoom and pan interactively.
 * Update the playlist using the new framing settings.
 
-![Slideshow with Exif metadata overlay](//screenshots/photo-reframe-exif-metadata.png)
+![Slideshow with Exif metadata overlay](/screenshots/photo-reframe-exif-metadata.png)
 
 ## Operating system and additional packages required
 
