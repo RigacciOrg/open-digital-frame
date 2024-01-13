@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+playlist-selection -- Create a playlist using matching tags
+
+Searches playlists of images into a directories tree, the ones
+matching the specified tags and date criteria are merged into a
+single resulting playlist. If some playlists reference one image
+more than once, the duplicates are removed from the result.
+
+Playlist files must be named playlist_16x9.m3u or playlist.m3u,
+tags and date is searched into a folder.nfo file.
+"""
+
+import argparse
+import datetime
+import hashlib
+import os
+import os.path
+import random
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+__author__ = "Niccolo Rigacci"
+__copyright__ = "Copyright 2021 Niccolo Rigacci <niccolo@rigacci.org>"
+__license__ = "GPLv3-or-later"
+__email__ = "niccolo@rigacci.org"
+__version__ = "0.0.3"
+
+NFO_FILES = ['folder.nfo'];
+PLAYLIST_FILES = ['playlist_16x9.m3u', 'playlist.m3u']
+
+
+#-------------------------------------------------------------------------
+# Return a datetime.datetime object from a string, or None.
+#-------------------------------------------------------------------------
+def parse_date_tag(d):
+    try:
+        dt = datetime.datetime.strptime(d, '%Y-%m-%d %H:%M:%S')
+    except:
+        try:
+            dt = datetime.datetime.strptime(d, '%Y-%m-%d %H:%M')
+        except:
+            try:
+                dt = datetime.datetime.strptime(d, '%Y-%m-%d')
+            except:
+                try:
+                    dt = datetime.datetime.strptime(d, '%Y-%m')
+                except:
+                    try:
+                        dt = datetime.datetime.strptime(d, '%Y')
+                    except:
+                        dt = None
+    return dt
+
+
+#-------------------------------------------------------------------------
+# Return True if the .nfo file matches the tags or date criteria.
+# Tags are matched against the following lists:
+#   TAGS_ALL      All the tags must match.
+#   TAGS_ANY      At least one tag must match.
+#   TAGS_EXCLUDE  None must match.
+# If DATE_MIN or DATE_MAX are defined, do also selection by date. 
+#-------------------------------------------------------------------------
+def nfo_match_tags(nfo_file):
+    try:
+        nfo_xml = ET.parse(nfo_file).getroot()
+        tags = [ t.text.lower().replace(',', '') for t in nfo_xml.findall('tag') ]
+    except:
+        print(f'ERROR: Parsing file "{nfo_file}"')
+        return False
+    date_tags = nfo_xml.findall('date')
+    if len(date_tags) > 0:
+        nfo_date = parse_date_tag(date_tags[0].text)
+    else:
+        nfo_date = None
+
+    # If no match tags are specified, assume True as default and do match by date.
+    if nfo_date != None and (DATE_MIN != None or DATE_MAX != None) and len(TAGS_ALL) == 0 and len(TAGS_ANY) == 0:
+        match_tags = True
+    else:
+        match_tags = False
+
+    required_all_count = len(TAGS_ALL)
+    for tag in tags:
+        if tag in TAGS_EXCLUDE:
+            #print(f'DEBUG: Excluding "{dir_name}" because it contains the "{tag}" tag')
+            break
+        if tag in TAGS_ANY:
+            print(f'INFO: Including "{dir_name}" because it contains the "{tag}" tag')
+            match_tags = True
+            break
+        if tag in TAGS_ALL:
+            required_all_count -= 1
+            if required_all_count == 0:
+                print(f'INFO: Including "{dir_name}" because it contains all the tags {TAGS_ALL}')
+                match_tags = True
+                break
+
+    if nfo_date != None:
+        if DATE_MIN:
+            if nfo_date < DATE_MIN:
+                match_tags = False
+        if DATE_MAX:
+            if nfo_date > DATE_MAX:
+                match_tags = False
+        if match_tags:
+            print(f'INFO: Including "{dir_name}" because it has date "{nfo_date}"')
+
+    return match_tags
+
+
+#-------------------------------------------------------------------------
+# Return a list of all the <tag> elements used in .nfo files.
+#-------------------------------------------------------------------------
+def get_all_tags(root_dir):
+    tags_found = []
+    for dir_name, subdir_list, file_list in os.walk(root_dir):
+        nfo_file = None
+        for filename in NFO_FILES:
+            if filename in file_list:
+                nfo_file = os.path.join(dir_name, filename)
+                try:
+                    nfo_xml = ET.parse(nfo_file).getroot()
+                    tags = [ t.text.lower().replace(',', '') for t in nfo_xml.findall('tag') ]
+                except:
+                    print(f'ERROR: Parsing file "{nfo_file}"')
+                    tags = []
+                for t in tags:
+                    if t not in tags_found:
+                        tags_found.append(t)
+                break
+    return tags_found
+
+
+#-------------------------------------------------------------------------
+# Append entries from the source playlist to the destination one.
+# Keep only entries with a valid geometry and remove duplicates.
+#-------------------------------------------------------------------------
+def add_playlist_entries(dir_name, playlist_file, output_file):
+    global items_added
+    with open(os.path.join(dir_name, playlist_file)) as fp:
+        for line in fp:
+            line = line.strip()
+            if line.startswith('#'):
+                # Skip comments.
+                continue
+            if '|' in line:
+                filename, geometry = line.split('|')
+                if not bool(re.match(r'^[0-9]+x[0-9]+', geometry)):
+                    # Skip entries without a valid geometry.
+                    continue
+            else:
+                # Skip any other line.
+                continue
+            item = '%s|%s' % (os.path.join(dir_name, filename), geometry)
+            item_hash = hashlib.md5(item.encode('utf-8')).hexdigest()
+            if (item_hash in items_added):
+                # Skip duplicate entry.
+                #print('DEBUG: Skipping duplicate entry for "{filename}"')
+                continue
+            else:
+                items_added.append(item_hash)
+                output_file.write(item + u'\n')
+
+
+#-------------------------------------------------------------------------
+# Main program.
+#-------------------------------------------------------------------------
+parser = argparse.ArgumentParser(description=u'Create a playlist using matching tags.')
+parser.add_argument('--root',     help='root directory to search for playlists', type=str, required=True)
+parser.add_argument('--any',      help='includes folders with at least one of these tags', type=str, metavar='TAGS')
+parser.add_argument('--all',      help='includes folders with all these tags', type=str, metavar='TAGS')
+parser.add_argument('--exclude',  help='exclude folders containing tags', type=str, metavar='TAGS')
+parser.add_argument('--datemin',  help='exclude folders with dates prior to the min', type=str)
+parser.add_argument('--datemax',  help='exclude folders with dates after the max', type=str)
+parser.add_argument('--shuffle',  help='shuffle directories in output playlist', action='store_true')
+group = parser.add_mutually_exclusive_group(required=True)
+group.add_argument('--list-tags', help='list all tags found in folder.nfo files', action='store_true')
+group.add_argument('--output',    help='filename to save the playlist to', metavar='PLAYLIST', type=str)
+args = parser.parse_args()
+
+if args.list_tags:
+    print(','.join(get_all_tags(args.root)))
+    sys.exit(0)
+
+if sys.version_info[0] < 3:
+    args.output = args.output.decode('utf-8')
+try:
+    output_file = open(args.output, 'w')
+except:
+    print(f'ERROR: Cannot write file "{args.output}"')
+    sys.exit(1)
+
+# Parse the requested tags and make all of them lowercase.
+TAGS_ANY = []
+TAGS_ALL = []
+TAGS_EXCLUDE = []
+if args.any:
+    TAGS_ANY = [ t.lower().strip() for t in args.any.split(',') ]
+if args.all:
+    TAGS_ALL = [ t.lower().strip() for t in args.all.split(',') ]
+if args.exclude:
+    TAGS_EXCLUDE = [ t.lower().strip() for t in args.exclude.split(',') ]
+
+# Parse the requested date criteria.
+DATE_MIN = parse_date_tag(args.datemin)
+DATE_MAX = parse_date_tag(args.datemax)
+
+items_added = []
+output_file.write('#EXTM3U-PHOTO-REFRAME\n')
+
+# Get full list of directories and subdirectories.
+dir_list = []
+for dir_name, subdir_list, file_list in os.walk(args.root):
+    dir_list.append(dir_name)
+
+# Directories list is sorted or shuffled.
+if args.shuffle:
+    random.shuffle(dir_list)
+else:
+    dir_list.sort()
+
+# Check each directory for criteria matching.
+for dir_name in dir_list:
+    nfo_file = playlist_file = None
+    file_list = []
+    # Directory must contain a playlist and an .nfo file.
+    for item in os.scandir(dir_name):
+        if item.is_file():
+            file_list.append(item.name)
+    for filename in NFO_FILES:
+        if filename in file_list:
+            nfo_file = filename
+            break
+    for filename in PLAYLIST_FILES:
+        if filename in file_list:
+            playlist_file = filename
+            break
+    if nfo_file is not None and playlist_file is not None:
+        if nfo_match_tags(os.path.join(dir_name, nfo_file)):
+            add_playlist_entries(dir_name, playlist_file, output_file)
+
+output_file.close()

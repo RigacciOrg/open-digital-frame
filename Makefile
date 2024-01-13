@@ -3,7 +3,7 @@ PREFIX = $(DESTDIR)/usr/local
 BINDIR = $(PREFIX)/bin
 
 BIN_FILES = open-digital-frame photo-reframe
-BIN_SCRIPTS = photo-info photo-share screensaver-off screensaver-on
+BIN_SCRIPTS = photo-info photo-share playlist-selection screensaver-off screensaver-on
 
 PYTHON_VERSION := $(shell python --version | awk '{print $$2}' | cut -f1,2 -d.)
 PYTHON_DIR = $(PREFIX)/lib/python$(PYTHON_VERSION)/dist-packages

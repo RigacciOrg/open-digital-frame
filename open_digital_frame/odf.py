@@ -35,7 +35,6 @@ from PyQt5.QtWidgets import (
     QLabel,
     QMainWindow,
     QScrollArea,
-    QSpacerItem,
     QVBoxLayout,
     QWidget)
 import xml.etree.ElementTree as ET
@@ -53,6 +52,7 @@ import re
 import subprocess
 import sys
 import time
+from urllib.parse import urlparse
 
 __author__ = "Niccolo Rigacci"
 __copyright__ = "Copyright 2023 Niccolo Rigacci <niccolo@rigacci.org>"
@@ -84,7 +84,7 @@ map_weight = {
 CFG_FILE = 'open-digital-frame.ini'
 if len(sys.argv) > 1:
     CFG_FILE = sys.argv[1]
-cfg = configparser.ConfigParser()
+cfg = configparser.ConfigParser(interpolation=None)
 cfg['DEFAULT'] = {
     'title': 'OpenDigitalFrame',
     'lbl_title_prefix': 'Digital Frame',
@@ -96,6 +96,7 @@ cfg['DEFAULT'] = {
     'folder_thumbnails': '["folder.jpg", "folder.png"]',
     'folder_playlists': '["playlist_16x9.m3u", "playlist_4x3.m3u", "playlist.m3u"]',
     'sort_keys': '["sorttitle", "date", "title"]',
+    'addons': '["play_selection", "poweroff"]',
     'auto_play': '',
     'logging_level': 'INFO'
 }
@@ -108,6 +109,96 @@ try:
 except:
     LOG_LEVEL = map_logging['INFO']
 logging.basicConfig(format='%(levelname)s: %(message)s', level=LOG_LEVEL)
+
+
+#----------------------------------------------------------------
+# Some global functions.
+#----------------------------------------------------------------
+def parse_addon_url(url):
+    """ Split an URL like addon:addon_name?key=val&... """
+    r = urlparse(url)
+    return r.scheme, r.path, r.query
+
+
+def read_directory_nfo(path):
+    """ Find all the subdirectories in path (not recursive) collecting the nfo data """
+    result = {}
+    p = pathlib.Path(path)
+    if path == PICTURES_ROOT:
+        # This is the root directory, add an item for the plugins folder.
+        result[ADDONS_DIR] = {'dir': ADDONS_DIR, 'title': 'Addons', 'sorttitle': '', 'date': '1970-01-01', 'thumbnail': None, 'path': ADDONS_DIR, 'playlist': None}
+    else:
+        # Add an item for the parent folder.
+        result[PARENT_DIR] = {'dir': PARENT_DIR, 'title': '', 'sorttitle': '', 'date': '1970-01-01', 'thumbnail': None, 'path': str(p.parent), 'playlist': None}
+    dir_list = [item for item in p.iterdir() if item.is_dir()]
+    for item in dir_list:
+        dir_name = item.name
+        dir_name = os.fsencode(dir_name).decode('utf-8')
+        result[dir_name] = get_directory_info(os.path.join(path, dir_name))
+    return result
+
+
+def get_directory_info(path):
+    """ Read the path/folder.nfo file and return a dictionary """
+    nfo = {}
+    # Initialize some values to defaults.
+    nfo['dir'] = os.path.basename(path)
+    nfo['title'] = os.path.basename(path).replace("_", " ")
+    nfo['path'] = path
+    nfo['sorttitle'] = None
+    nfo['date'] = None
+    nfo['tags'] = []
+    nfo['thumbnail'] = None
+    nfo['playlist'] = None
+    nfo['slides'] = None
+    for name in FOLDER_THUMBNAILS:
+        dir_thumb = os.path.join(path, name.strip())
+        if os.path.exists(dir_thumb.encode('utf-8')):
+            nfo['thumbnail'] = dir_thumb
+            break
+    for name in FOLDER_PLAYLISTS:
+        playlist = name.strip()
+        playlist_path = os.path.join(path, playlist)
+        if os.path.exists(playlist_path.encode('utf-8')):
+            nfo['playlist'] = playlist
+            nfo['slides'] = playlist_length(playlist_path)
+            break
+    # Read the .nfo xml file for actual values.
+    nfo_file = os.path.join(path, 'folder.nfo')
+    if os.path.exists(nfo_file.encode('utf-8')):
+        try:
+            root = ET.parse(nfo_file.encode('utf-8')).getroot()
+        except Exception as ex:
+            logging.error('Failed to parse file "%s"' % (nfo_file,))
+            root = {}
+        for child in root:
+            if child.tag in ['title', 'sorttitle']:
+                nfo[child.tag] = child.text.strip()
+            elif child.tag == 'tag':
+                nfo['tags'].append(child.text.strip())
+            elif child.tag == 'date':
+                date_string = child.text.strip()
+                if re.match('\d{4}$', date_string):
+                    nfo['date'] = '%s-01-01' % (date_string,)
+                elif re.match('\d{4}-\d{2}-\d{2}$', date_string):
+                    nfo['date'] = date_string
+    if nfo['sorttitle'] is None:
+        nfo['sorttitle'] = nfo['title']
+    if nfo['date'] is None:
+        nfo['date'] = datetime.datetime.fromtimestamp(os.stat(path.encode('utf-8')).st_mtime).strftime('%Y-%m-%d')
+    return nfo
+
+
+def playlist_length(playlist):
+    """ Return the number of images into the playlist with a defined geometry """
+    slide_count = 0
+    with open(playlist.encode('utf-8'), mode="r", encoding="utf-8") as fp:
+        for line in fp:
+            line = line.strip()
+            if re.search("[^#].*\|\d", line):
+                slide_count += 1
+    return slide_count
+
 
 try:
     # Default pictures directory.
@@ -126,6 +217,8 @@ try:
     FOLDER_THUMBNAILS = json.loads(cfg['App']['folder_thumbnails'])
     # List of keys (from nfo files) that can be used for sorting.
     SORT_KEYS = json.loads(cfg['App']['sort_keys'])
+    # List of addons to load.
+    ADDONS_LIST = json.loads(cfg['App']['addons'])
     # Playlist to play on start, relative to pictures_root.
     AUTO_PLAY = cfg['App']['auto_play']
 except Exception as ex:
@@ -134,19 +227,30 @@ except Exception as ex:
 
 # Directory name for partent folder.
 PARENT_DIR = '..'
+# Directory name for partent folder.
+ADDONS_DIR = 'addons:'
+# Timeout to hide the popup tooltip.
+POPUP_TIMEOUT_MS = 4000
 
 # If pictures directory is not defined, try $HOME/Pictures.
 if PICTURES_ROOT is None or PICTURES_ROOT == '':
     if 'HOME' in os.environ:
         PICTURES_ROOT = os.path.join(os.environ['HOME'], 'Pictures')
 
-# If autoplay is requested, check if the file esists.
+# If autoplay is requested, check if the file or addon esists.
 AUTO_PLAYLIST = None
 if AUTO_PLAY != '':
-    AUTO_PLAYLIST = os.path.join(PICTURES_ROOT, AUTO_PLAY)
-    if not os.path.exists(AUTO_PLAYLIST):
-        logging.warning('Playlist does not exists: "%s"' % (AUTO_PLAYLIST))
-        AUTO_PLAYLIST = None
+    if AUTO_PLAY.startswith('addon:'):
+        scheme, addon, query = parse_addon_url(AUTO_PLAY)
+        if addon in ADDONS_LIST:
+            AUTO_PLAYLIST = AUTO_PLAY
+        else:
+            AUTO_PLAYLIST = None
+    else:
+        AUTO_PLAYLIST = os.path.join(PICTURES_ROOT, AUTO_PLAY)
+        if not os.path.exists(AUTO_PLAYLIST):
+            logging.warning('Playlist does not exists: "%s"' % (AUTO_PLAYLIST))
+            AUTO_PLAYLIST = None
 
 
 class Worker(QObject):
@@ -166,6 +270,35 @@ class Worker(QObject):
 
 class MainWindow(QMainWindow):
 
+
+    class popupMsg(QLabel):
+        """ QLabel with QTimer to show a popup tooltip on the MainWindow """
+        def __init__(self, parent, main_window):
+            QLabel.__init__(self, parent)
+            self.window = main_window
+            self.timer = QTimer(self)
+
+        def showMsg(self, msg=None):
+            if self.timer.isActive():
+                self.timer.stop()
+            self.clear()
+            if msg is None:
+                self.resize(0, 0)
+                self.setHidden(True)
+            else:
+                self.setText(msg)
+                self.setStyleSheet(self.window.skin.STYLE_POPUP)
+                label_w = self.sizeHint().width()
+                label_h = self.sizeHint().height()
+                label_margin_top = label_h // 2
+                self.setHidden(False)
+                self.resize(label_w, label_h)
+                self.move(self.window.screen_width - label_w, label_margin_top)
+                self.show()
+                self.timer = QTimer(singleShot=True, timeout=self.showMsg)
+                self.timer.start(POPUP_TIMEOUT_MS)
+
+
     def __init__(self):
         super().__init__()
 
@@ -173,9 +306,12 @@ class MainWindow(QMainWindow):
             logging.error('Pictures directory does not exists: "%s"s' % (PICTURES_ROOT,))
             sys.exit(1)
 
+        self.pictures_root = PICTURES_ROOT
         self.setWindowTitle(APP_TITLE)
         self.sort_key = SORT_KEYS[0]
         self.sort_reverse = False
+        self.addon_event_filter = None
+        self.playlist = None
 
         # Get the screen size to calculate skin aspect.
         self.app = QApplication.instance()
@@ -186,12 +322,23 @@ class MainWindow(QMainWindow):
         # The skin parameters are defined and calculated by a separate module.
         skin_path = 'open_digital_frame.resources.addons.' + SKIN
         logging.info('Importing skin module "%s"' % (skin_path,))
-        skin_mod = importlib.import_module(skin_path)
-        self.skin = skin_mod.skin(screen_width=self.screen_width)
+        module = importlib.import_module(skin_path)
+        self.skin = module.skin(screen_width=self.screen_width)
+
+        # Import attitional addons; use a list to keep the import order.
+        self.addons = {}
+        self.addons_list = []
+        for addon in ADDONS_LIST:
+            addon_path = 'open_digital_frame.resources.addons.addon_%s' % (addon,)
+            logging.info('Importing addon "%s"' % (addon_path,))
+            # TODO: Use try to catch errors in modules.
+            module = importlib.import_module(addon_path)
+            self.addons[addon] = module.addon(self)
+            self.addons_list.append(self.addons[addon].item)
 
         # Calculate the QFontMetrics for the thumbnails captions.
         font = self.font()
-        font.setFamily(self.skin.ITEM_CAPTION_FONT_FAMILY)
+        font.setFamily(self.skin.FONT_FAMILY)
         font.setWeight(map_weight[self.skin.ITEM_CAPTION_FONT_WEIGHT])
         font.setPixelSize(self.skin.ITEM_CAPTION_FONT_SIZE)
         self.caption_font_metrics = QFontMetrics(font)
@@ -208,59 +355,42 @@ class MainWindow(QMainWindow):
         # Set initial directory and initial focused item.
         self.focused_item_in_dir = {}
         if AUTO_PLAYLIST is not None:
-            dir_name = os.path.dirname(AUTO_PLAYLIST)
-            current_path = os.path.dirname(dir_name)
-            self.focused_item_in_dir[current_path] = os.path.basename(dir_name)
+            if AUTO_PLAYLIST.startswith('addon:'):
+                # Playlist is an add-on url: get the playlist filename
+                # from the add-on and play it.
+                logging.info('Starting addon autoplay: "%s"' % (AUTO_PLAYLIST,))
+                scheme, addon, query = parse_addon_url(AUTO_PLAYLIST)
+                # Set the focus on the add-on.
+                self.current_path = ADDONS_DIR
+                self.focused_item_in_dir[self.current_path] = f'{scheme}:{addon}'
+                self.playlist = self.addons[addon].generatePlaylist(query)
+            else:
+                # Playlist is a filename.
+                dir_name = os.path.dirname(AUTO_PLAYLIST)
+                self.current_path = os.path.dirname(dir_name)
+                self.focused_item_in_dir[self.current_path] = os.path.basename(dir_name)
+                self.playlist = AUTO_PLAYLIST
             # The autoplay will wait this mutex lock before start.
             self.main_window_refresh_mutex.lock()
-            # Allow 1000 ms before trying the autoplay.
             self.timer = QTimer()
+            # Allow 1000 ms before trying the autoplay.
             self.timer.singleShot(1000, self.autoPlay)
         else:
-            current_path = PICTURES_ROOT
+            self.current_path = PICTURES_ROOT
 
         # Within __init__() the scroll area is used just to display the wait icon.
         self.scroll = QScrollArea()
         self.setCentralWidget(self.scroll)
-        self.initUI(current_path)
+        self.waitThread(self.refreshUI)
 
 
-    def autoPlay(self):
-        """ Start the autoplay of the requested playlist """
-        logging.debug('Check if MainWindow() refresh is complete before starting autoplay')
-        # Wait max 100 ms for the MainWindow refresh mutex is released.
-        if self.main_window_refresh_mutex.tryLock(100):
-            self.main_window_refresh_mutex.unlock()
-            logging.info('Starting autoplay')
-            self.selectItem(self.focused_item)
-        else:
-            logging.debug('MainWindow refresh is not complete: delay the autoplay by 1 sec.')
-            self.timer.singleShot(1000, self.autoPlay)
-
-
-    def initUI(self, path):
-        """ Display the wait icon and start a new thread to refresh the UI """
-        # The mutex lock is used to indicate that the UI refresh is running.
-        self.main_window_refresh_mutex.tryLock()
-        self.current_path = path
-        # Show a shadow background and the wait icon.
-        # Actually we use a trick to hide the wait icon; after the icon is
-        # displayed, the UI starts to redreaw almost immediately, but the
-        # screen is not refreshed untill the function is completed.
-        # When finally the screen is refreshed, the wait icon does not
-        # longer exists, so it disappears.
-        icon = QPixmap(self.skin.ICON_WAIT).scaled(self.skin.THUMB_WIDTH, self.skin.THUMB_HEIGHT, aspectRatioMode=Qt.KeepAspectRatio, transformMode=Qt.SmoothTransformation)
-        dim_background = QLabel(self.scroll)
-        dim_background.move(0, 0)
-        dim_background.resize(self.screen_width, self.screen_height)
-        dim_background.setStyleSheet(self.skin.STYLE_WAIT_BACKGROUND)
-        dim_background.setHidden(False)
-        wait_icon = QLabel(self.scroll)
-        wait_icon.setPixmap(icon)
-        wait_icon.move((self.screen_width - icon.width()) // 2, (self.screen_height - icon.height()) // 2)
-        wait_icon.setHidden(False)
-        # Force GUI refresh (not working during the first __init__() execution).
-        self.app.processEvents()
+    def waitThread(self, threaded_function):
+        """ Display the wait icon and call a function in a new thread """
+        self.showWaitIcon()
+        # We can use a trick to hide the wait icon: if the threaded_function
+        # will redraw the UI, we can just do nothing. During the redraw the
+        # screen is not refreshed, when it is finally refreshed, the wait
+        # icon does not longer exist.
         # Create a new thread to call the refreshUI().
         # https://realpython.com/python-pyqt-qthread/
         self.thread = QThread()
@@ -270,8 +400,37 @@ class MainWindow(QMainWindow):
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self.thread.deleteLater)
-        self.worker.refresh_ui.connect(self.refreshUI)
+        self.worker.refresh_ui.connect(threaded_function)
         self.thread.start()
+
+
+    def showWaitIcon(self):
+        """ Show a shadow background and the wait icon """
+        # The mutex lock is used to indicate that the UI refresh is running.
+        self.main_window_refresh_mutex.tryLock()
+        # Prepare background and icon.
+        self.dim_background = QLabel(self.scroll)
+        self.dim_background.move(0, 0)
+        self.dim_background.resize(self.screen_width, self.screen_height)
+        self.dim_background.setStyleSheet(self.skin.STYLE_WAIT_BACKGROUND)
+        self.dim_background.setHidden(False)
+        icon = QPixmap(self.skin.ICON_WAIT).scaled(self.skin.THUMB_WIDTH, self.skin.THUMB_HEIGHT, aspectRatioMode=Qt.KeepAspectRatio, transformMode=Qt.SmoothTransformation)
+        self.wait_icon = QLabel(self.scroll)
+        self.wait_icon.setPixmap(icon)
+        self.wait_icon.move((self.screen_width - icon.width()) // 2, (self.screen_height - icon.height()) // 2)
+        self.wait_icon.setHidden(False)
+        # Force GUI refresh (not working during the first __init__() execution).
+        self.app.processEvents()
+
+
+    def hideWaitIcon(self):
+        """ Hide the shadow background and the wait icon """
+        if hasattr(self, 'dim_background'):
+            self.dim_background.setHidden(True)
+        if hasattr(self, 'wait_icon'):
+            self.wait_icon.setHidden(True)
+        # UI refresh is complete, release the mutex lock.
+        self.main_window_refresh_mutex.unlock()
 
 
     def refreshUI(self):
@@ -279,6 +438,7 @@ class MainWindow(QMainWindow):
         self.ui_items = []
         self.focused_item = None
         self.scroll = QScrollArea()
+        self.setCentralWidget(self.scroll)
         self.widget = QWidget()
         self.grid = QGridLayout()
         self.grid.setSpacing(self.skin.GRID_ITEM_SPACING)
@@ -291,16 +451,29 @@ class MainWindow(QMainWindow):
         # Prepare the "playable" icon.
         playable_pixmap = QPixmap(self.skin.ICON_PLAYABLE).scaled(self.skin.ICON_PLAYABLE_SIZE, self.skin.ICON_PLAYABLE_SIZE, aspectRatioMode=Qt.KeepAspectRatio, transformMode=Qt.SmoothTransformation)
 
-        # Get the dir_items: a dictionary where the keys are the directory
-        # names and each element is a dictionary of nfo elements.
-        dir_items = read_directory_nfo(self.current_path)
-        order = 'descending' if self.sort_reverse else 'ascending'
-        logging.debug('Sorting items by %s, %s' % (self.sort_key, order))
-        sorted_keys = sorted(dir_items, key=lambda k: dir_items[k][self.sort_key], reverse=self.sort_reverse)
-        # Move the '..' (PARENT_DIR) item to the top of the list, regardless of sorting.
-        if PARENT_DIR in sorted_keys:
-            sorted_keys.remove(PARENT_DIR)
-            sorted_keys.insert(0, PARENT_DIR)
+        # Populate the dir_items dictionary: the keys are directory
+        # names and each element is a dictionary of nfo tags.
+        if self.current_path == ADDONS_DIR:
+            # This is the addons directory.
+            dir_items = {}
+            dir_items[PARENT_DIR] = {'dir': PARENT_DIR, 'title': '', 'sorttitle': '', 'date': '1970-01-01', 'thumbnail': None, 'path': PICTURES_ROOT, 'playlist': None}
+            sorted_keys = [PARENT_DIR]
+            for addon in self.addons_list:
+                key = addon['dir']
+                sorted_keys.append(key)
+                dir_items[key] = addon
+        else:
+            # Get the info from all the subdirectories.
+            dir_items = read_directory_nfo(self.current_path)
+            order = 'descending' if self.sort_reverse else 'ascending'
+            logging.debug('Sorting items by %s, %s' % (self.sort_key, order))
+            sorted_keys = sorted(dir_items, key=lambda k: dir_items[k][self.sort_key], reverse=self.sort_reverse)
+
+        # Move ADDONS_DIR and PARENT_DIR special items to the top of the list, regardless of sorting.
+        for special_item in [ADDONS_DIR, PARENT_DIR]:
+            if special_item in sorted_keys:
+                sorted_keys.remove(special_item)
+                sorted_keys.insert(0, special_item)
         #print(dir_items)
         #print('sorted_keys: %s' % (sorted_keys,))
 
@@ -310,6 +483,7 @@ class MainWindow(QMainWindow):
         else:
             dir_to_focus = None
         index_to_focus = 0
+
 
         i = 0
         for key in sorted_keys:
@@ -327,6 +501,8 @@ class MainWindow(QMainWindow):
                 if thumb is None:
                     if dir_item['dir'] == PARENT_DIR:
                         thumbnail_image = self.skin.ICON_DEFAULT_FOLDER_BACK
+                    elif dir_item['dir'] == ADDONS_DIR:
+                        thumbnail_image = self.skin.ICON_DEFAULT_ADDON
                     else:
                         thumbnail_image = self.skin.ICON_DEFAULT_FOLDER
                 elif os.path.exists(thumb):
@@ -418,10 +594,13 @@ class MainWindow(QMainWindow):
         gradient = QPixmap(self.skin.GRADIENT_IMAGE).scaled(self.screen_width, self.skin.GRADIENT_HEIGHT, aspectRatioMode=Qt.IgnoreAspectRatio, transformMode=Qt.SmoothTransformation)
         window_title_shadow.setPixmap(gradient)
         window_title = QLabel(self.scroll)
-        p_root = pathlib.Path(PICTURES_ROOT)
-        p_cur = pathlib.Path(self.current_path)
-        prefix_len = len(str(p_root)) - len(p_root.name)
-        rel_dir = str(p_cur)[prefix_len:]
+        if self.current_path == ADDONS_DIR:
+            rel_dir = ADDONS_DIR
+        else:
+            p_root = pathlib.Path(PICTURES_ROOT)
+            p_cur = pathlib.Path(self.current_path)
+            prefix_len = len(str(p_root)) - len(p_root.name)
+            rel_dir = str(p_cur)[prefix_len:]
         title_text = '%s: %s' % (LBL_TITLE_PREFIX, rel_dir)
         window_title.setText(title_text)
         window_title.setStyleSheet(self.skin.STYLE_WINDOW_TITLE)
@@ -443,6 +622,10 @@ class MainWindow(QMainWindow):
         window_subtitle.setText('%s: %s' % (LBL_SORT_BY, sort_label,))
         window_subtitle.setStyleSheet(self.skin.STYLE_WINDOW_SUBTITLE)
         window_subtitle.move(0, label_height)
+
+        # Prepare the tooltip popup label with timer and initialize (hide) it.
+        self.popup_label = self.popupMsg(self.scroll, self)
+        self.popup_label.showMsg(None)
 
         self.show()
         # Set the actual UI focus and the "logical" focus.
@@ -478,37 +661,74 @@ class MainWindow(QMainWindow):
 
     def selectItem(self, item_index):
         """ Double click or Return key over an item  """
+        # Remember the focused item for this directory before selecting the new.
+        focused_dir = self.ui_items[self.focused_item]['nfo']['dir']
+        self.focused_item_in_dir[self.current_path] = focused_dir
+        # Get nfo metadata of the selected item.
         nfo = self.ui_items[item_index]['nfo']
+        print('nfo: %s' % (nfo,))
         # If the selected item has a playlist, play it.
         if 'playlist' in nfo and nfo['playlist'] is not None:
             playlist = os.path.join(nfo['path'], nfo['playlist'])
             if os.path.exists(playlist):
-                logging.info('Starting playlist "%s"' % (playlist,))
-                # Build the player command line replacing the filename placeholder.
-                cmd = []
-                filename_replaced = False
-                for part in PLAYER_CMD.split():
-                    if part == '{f}':
-                        cmd.append(playlist)
-                        filename_replaced = True
-                    else:
-                        cmd.append(part)
-                if not filename_replaced:
-                    # Add playlist to the end of the command line.
-                    cmd.append(playlist)
-                logging.debug('Starting command "%s"' % (cmd,))
-                retcode = subprocess.call(cmd)
+                self.playlist = playlist
+                self.waitThread(self.playSlideshow)
                 return
-        # The selected item is a simple directory.
         new_path = nfo['path']
-        if os.path.isdir(new_path):
-            # Remember focused item for this directory before changing.
-            focused_dir = self.ui_items[self.focused_item]['nfo']['dir']
-            self.focused_item_in_dir[self.current_path] = focused_dir
+        if new_path.startswith('addon:'):
+            # The selected item is an addon.
+            self.addonExec(new_path[len('addon:'):])
+        elif new_path == ADDONS_DIR or os.path.isdir(new_path):
+            # The selected item is the add-ons special item or a directory.
             logging.debug('Switching from directory "%s" to "%s"' % (self.current_path, new_path))
-            self.initUI(new_path)
+            self.current_path = new_path
+            self.waitThread(self.refreshUI)
         else:
             logging.warning('Selected path "%s" does not exists' % (new_path,))
+
+
+    def addonExec(self, addon_name):
+        """ Call the run() method of the add-on module """
+        logging.info('Calling add-on %s.run()' % (addon_name,))
+        self.addons[addon_name].run()
+
+
+    def playSlideshow(self):
+        """ Call the external program to play the self.playlist slideshow """
+        logging.info('Starting playlist "%s"' % (self.playlist,))
+        # Build the player command line replacing the filename placeholder.
+        cmd = []
+        filename_replaced = False
+        for part in PLAYER_CMD.split():
+            if part == '{f}':
+                cmd.append(self.playlist)
+                filename_replaced = True
+            else:
+                cmd.append(part)
+        if not filename_replaced:
+            # Add playlist to the end of the command line.
+            cmd.append(self.playlist)
+        logging.debug('Starting command "%s"' % (cmd,))
+        try:
+            retcode = subprocess.call(cmd)
+        except Exception as ex:
+            logging.error('Exception running "%s": %s' % (cmd[0], str(ex)))
+        self.hideWaitIcon()
+
+
+    def autoPlay(self):
+        """ Start the autoplay of the defined self.playlist """
+        if self.playlist is None:
+            return
+        logging.debug('Wait MainWindow() complete refresh before starting autoplay')
+        # Wait max 100 ms for the MainWindow refresh mutex is released.
+        if self.main_window_refresh_mutex.tryLock(100):
+            self.main_window_refresh_mutex.unlock()
+            logging.info('Starting autoplay')
+            self.waitThread(self.playSlideshow)
+        else:
+            logging.debug('MainWindow refresh is not complete: delay the autoplay by 1 sec.')
+            self.timer.singleShot(1000, self.autoPlay)
 
 
     def updateSortKey(self, cycle=False, invert=False):
@@ -524,11 +744,13 @@ class MainWindow(QMainWindow):
         # Remember focused item before sorting.
         focused_dir = self.ui_items[self.focused_item]['nfo']['dir']
         self.focused_item_in_dir[self.current_path] = focused_dir
-        self.initUI(self.current_path)
+        self.waitThread(self.refreshUI)
 
 
     def eventFilter(self, source, event):
         """ Process mouse and keyboard events """
+        if self.addon_event_filter is not None:
+            return self.addon_event_filter(source, event)
         if hasattr(source, 'item_index'):
             # An event occurred over an item of the list.
             if event.type() == QEvent.MouseButtonPress:
@@ -536,12 +758,14 @@ class MainWindow(QMainWindow):
             elif event.type() == QEvent.MouseButtonDblClick:
                 self.selectItem(source.item_index)
         elif event.type() == QEvent.KeyPress:
-            if event.key() == Qt.Key_Enter or event.key() == Qt.Key_Return:
+            if event.key() in (Qt.Key_Enter, Qt.Key_Return, Qt.Key_Space):
                 self.selectItem(self.focused_item)
-            elif event.key() == Qt.Key_Backspace:
+            elif event.key() in (Qt.Key_Backspace, Qt.Key_Escape):
                 # If the first item is the parent directory, switch to it.
                 if self.ui_items[0]['nfo']['dir'] == PARENT_DIR:
                     self.selectItem(0)
+            elif event.key() == Qt.Key_A:
+                self.saveAutoplay(self.focused_item)
             elif event.key() == Qt.Key_S:
                 self.updateSortKey(cycle=True)
             elif event.key() == Qt.Key_R:
@@ -574,7 +798,7 @@ class MainWindow(QMainWindow):
             elif event.key() == Qt.Key_End:
                 # Focus to the last element.
                 self.moveFocus(len(self.ui_items) - 1)
-            elif event.key() == Qt.Key_F11 or event.key() == Qt.Key_F:
+            elif event.key() in (Qt.Key_F11, Qt.Key_F):
                 self.toggleFullscreen()
             else:
                 #logging.debug('KeyPress: %s [%r]' % (event.key(), source))
@@ -592,84 +816,33 @@ class MainWindow(QMainWindow):
             self.showFullScreen()
 
 
-def read_directory_nfo(path):
-    """ Find all the subdirectories in path (not recursive) collecting the nfo data """
-    result = {}
-    p = pathlib.Path(path)
-    if path == PICTURES_ROOT:
-        # This is the root directory.
-        pass
-    else:
-        # Add an item for the parent folder.
-        result[PARENT_DIR] = {'dir': PARENT_DIR, 'title': '', 'sorttitle': '', 'date': '1970-01-01', 'thumbnail': None, 'path': str(p.parent), 'playlist': None}
-    dir_list = [item for item in p.iterdir() if item.is_dir()]
-    for item in dir_list:
-        dir_name = item.name
-        dir_name = os.fsencode(dir_name).decode('utf-8')
-        result[dir_name] = get_directory_info(os.path.join(path, dir_name))
-    return result
+    def saveAutoplay(self, item_index):
+        """ Save current item as auto_play config option """
+        nfo = self.ui_items[item_index]['nfo']
+        # If the selected item has a playlist, save in cofig file as auto_play.
+        if 'playlist' in nfo and nfo['playlist'] is not None:
+            playlist = os.path.join(nfo['path'], nfo['playlist'])
+            if not os.path.exists(playlist):
+                logging.warning('Playlist "%s" does not actually exists' % (playlist,))
+                playlist = ''
+        else:
+            playlist = ''
+        msg = 'Saving auto_play option...' if playlist != '' else 'Clearing auto_play option...'
+        self.popup_label.showMsg(msg)
+        self.saveConfigOption('auto_play', playlist)
 
 
-def get_directory_info(path):
-    """ Read the path/folder.nfo file and return a dictionary """
-    nfo = {}
-    # Initialize some values to defaults.
-    nfo['dir'] = os.path.basename(path)
-    nfo['title'] = os.path.basename(path).replace("_", " ")
-    nfo['path'] = path
-    nfo['sorttitle'] = None
-    nfo['date'] = None
-    nfo['tags'] = []
-    nfo['thumbnail'] = None
-    nfo['playlist'] = None
-    nfo['slides'] = None
-    for name in FOLDER_THUMBNAILS:
-        dir_thumb = os.path.join(path, name.strip())
-        if os.path.exists(dir_thumb.encode('utf-8')):
-            nfo['thumbnail'] = dir_thumb
-            break
-    for name in FOLDER_PLAYLISTS:
-        playlist = name.strip()
-        playlist_path = os.path.join(path, playlist)
-        if os.path.exists(playlist_path.encode('utf-8')):
-            nfo['playlist'] = playlist
-            nfo['slides'] = playlist_length(playlist_path)
-            break
-    # Read the .nfo xml file for actual values.
-    nfo_file = os.path.join(path, 'folder.nfo')
-    if os.path.exists(nfo_file.encode('utf-8')):
+    def saveConfigOption(self, option, value):
+        """ Rewrite one option in configuration file """
+        logging.info('Saving "%s" as "%s" option' % (value, option))
+        cfg['App'][option] = value
         try:
-            root = ET.parse(nfo_file.encode('utf-8')).getroot()
+            with open(CFG_FILE, 'w') as new_configfile:
+                cfg.write(new_configfile)
         except Exception as ex:
-            logging.error('Failed to parse file "%s"' % (nfo_file,))
-            root = {}
-        for child in root:
-            if child.tag in ['title', 'sorttitle']:
-                nfo[child.tag] = child.text.strip()
-            elif child.tag == 'tag':
-                nfo['tags'].append(child.text.strip())
-            elif child.tag == 'date':
-                date_string = child.text.strip()
-                if re.match('\d{4}$', date_string):
-                    nfo['date'] = '%s-01-01' % (date_string,)
-                elif re.match('\d{4}-\d{2}-\d{2}$', date_string):
-                    nfo['date'] = date_string
-    if nfo['sorttitle'] is None:
-        nfo['sorttitle'] = nfo['title']
-    if nfo['date'] is None:
-        nfo['date'] = datetime.datetime.fromtimestamp(os.stat(path.encode('utf-8')).st_mtime).strftime('%Y-%m-%d')
-    return nfo
+            logging.error('Cannot write configuration file "%s": %s' % (CFG_FILE, str(ex)))
 
 
-def playlist_length(playlist):
-    """ Return the number of images into the playlist with a defined geometry """
-    slide_count = 0
-    with open(playlist.encode('utf-8'), mode="r", encoding="utf-8") as fp:
-        for line in fp:
-            line = line.strip()
-            if re.search("[^#].*\|\d", line):
-                slide_count += 1
-    return slide_count
 
 
 def main():
