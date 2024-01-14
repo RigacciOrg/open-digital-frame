@@ -47,7 +47,7 @@ class addon():
             'sorttitle': None,
             'date': None,
             'tags': None,
-            'thumbnail': os.path.join(res_img, 'icon_settings_addons43.png'),
+            'thumbnail': os.path.join(res_img, 'DefaultTags43.png'),
             'playlist': None,
             'slides': None
         }
@@ -57,15 +57,23 @@ class addon():
         """ Show the plugin widget into the app QScrollArea and install the event filter """
 
         # Define the size of the items (buttons) and font.
-        self.COLUMNS = 5
-        self.ITEM_WIDTH = int(self.app.screen_width * 0.96 / self.COLUMNS)
-        self.ITEM_HEIGHT = int(self.ITEM_WIDTH * 0.25)
+        self.COLUMNS = 6
+        self.GRID_MARGIN = 32
+        self.GRID_SPACING = 16
+
+        horizontal_space = ((self.GRID_MARGIN + 9) * 2) + (self.GRID_SPACING * (self.COLUMNS - 1))
+        self.ITEM_WIDTH = int((self.app.screen_width - horizontal_space) / self.COLUMNS)
+        self.ITEM_HEIGHT = int(self.ITEM_WIDTH * 0.33)
         font_size = int(self.ITEM_HEIGHT * 0.25)
         border_width = 12
-        self.STYLE_NORMAL_UNFOCUSED   = 'font-size: %dpx; background-color: grey;  border: solid black; border-width: %dpx;' % (font_size, border_width)
-        self.STYLE_SELECTED_UNFOCUSED = 'font-size: %dpx; background-color: white; border: solid black; border-width: %dpx;' % (font_size, border_width)
-        self.STYLE_NORMAL_FOCUSED     = 'font-size: %dpx; background-color: grey;  border: solid red;   border-width: %dpx;' % (font_size, border_width)
-        self.STYLE_SELECTED_FOCUSED   = 'font-size: %dpx; background-color: white; border: solid red;   border-width: %dpx;' % (font_size, border_width)
+        bg_normal = '#0f85a6'
+        fg_normal = 'white'
+        bg_select = '#19b9e6'
+        focused   = '#9bdcee'
+        self.STYLE_NORMAL_UNFOCUSED   = 'font-size: %dpx; background-color: %s; color: %s; border: solid %s; border-width: %dpx;' % (font_size, bg_normal, fg_normal, bg_normal, border_width)
+        self.STYLE_SELECTED_UNFOCUSED = 'font-size: %dpx; background-color: %s; border: solid %s; border-width: %dpx;' % (font_size, bg_select, bg_select, border_width)
+        self.STYLE_NORMAL_FOCUSED     = 'font-size: %dpx; background-color: %s; color: %s; border: solid %s; border-width: %dpx;' % (font_size, bg_normal, fg_normal, focused, border_width)
+        self.STYLE_SELECTED_FOCUSED   = 'font-size: %dpx; background-color: %s; border: solid %s; border-width: %dpx;' % (font_size, bg_select, focused, border_width)
 
         self.ui_items = []
         self.app.scroll = QScrollArea()
@@ -78,9 +86,13 @@ class addon():
         widget.setStyleSheet(self.app.skin.STYLE_GRID)
         widget.setMinimumSize(self.app.screen_width, self.app.screen_height)
         page_layout = QVBoxLayout()
+        page_layout.setContentsMargins(0, 0, 0, 0)
         grid_tags = QGridLayout()
         grid_years = QGridLayout()
         grid_buttons = QGridLayout()
+        for g in (grid_tags, grid_years, grid_buttons):
+            g.setSpacing(self.GRID_SPACING)
+            g.setContentsMargins(self.GRID_MARGIN, self.GRID_MARGIN, self.GRID_MARGIN, self.GRID_MARGIN)
 
         i = 0
         # Add the tag buttons.
@@ -276,6 +288,7 @@ class addon():
         try:
             output = subprocess.Popen(cmd, stdout=subprocess.PIPE).communicate()[0].decode('utf-8')
             tags_found = output.strip().split(',')
+            tags_found.sort()
         except Exception as ex:
             logging.error('Exception running "%s": %s' % (cmd[0], str(ex)))
             tags_found = []

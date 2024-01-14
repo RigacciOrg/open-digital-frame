@@ -20,7 +20,7 @@ class skin():
         self.ITEM_FOCUSED_BACKGROUND = '#0f85a6'
         self.ITEM_FOCUSED_BORDER_COLOR = '#0f85a6'
         self.ITEM_CAPTION_COLOR = 'white'
-        self.POPUP_BACKGROUND = '#0f1b1f'
+        self.POPUP_BACKGROUND = '#c00f1b1f'
         self.POPUP_COLOR = 'white'
 
         # Debug colors.

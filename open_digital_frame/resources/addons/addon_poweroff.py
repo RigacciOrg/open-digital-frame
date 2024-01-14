@@ -22,8 +22,8 @@ class addon():
             'slides': None
         }
 
-    def run(self, scroll_area):
-        cmd = ['/usr/local/bin/photo-reboot']
+    def run(self):
+        cmd = ['/usr/local/bin/odf-poweroff']
         try:
             retcode = subprocess.call(cmd)
         except Exception as ex:

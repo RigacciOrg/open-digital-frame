@@ -3,7 +3,7 @@ PREFIX = $(DESTDIR)/usr/local
 BINDIR = $(PREFIX)/bin
 
 BIN_FILES = open-digital-frame photo-reframe
-BIN_SCRIPTS = photo-info photo-share playlist-selection screensaver-off screensaver-on
+BIN_SCRIPTS = odf-poweroff photo-info photo-share playlist-selection screensaver-off screensaver-on
 
 PYTHON_VERSION := $(shell python --version | awk '{print $$2}' | cut -f1,2 -d.)
 PYTHON_DIR = $(PREFIX)/lib/python$(PYTHON_VERSION)/dist-packages
@@ -25,7 +25,7 @@ install-python:
 
 .PHONY: install-utils
 install-utils:
-	install -m 755 -o root -g root -D $(BINDIR) $(addprefix bin/, $(BIN_SCRIPTS))
+	install -m 755 -o root -g root -D -t $(BINDIR) $(addprefix bin/, $(BIN_SCRIPTS))
 
 .PHONY: uninstall
 uninstall:
