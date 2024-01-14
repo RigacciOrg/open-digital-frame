@@ -56,24 +56,27 @@ class addon():
     def run(self):
         """ Show the plugin widget into the app QScrollArea and install the event filter """
 
-        # Define the size of the items (buttons) and font.
+        # Size of GUI items.
         self.COLUMNS = 6
-        self.GRID_MARGIN = 32
-        self.GRID_SPACING = 16
+        GRID_MARGIN = 32
+        GRID_SPACING = 16
+        BORDER_WIDTH = 10
 
-        horizontal_space = ((self.GRID_MARGIN + 9) * 2) + (self.GRID_SPACING * (self.COLUMNS - 1))
-        self.ITEM_WIDTH = int((self.app.screen_width - horizontal_space) / self.COLUMNS)
+        # Colors
+        NORMAL_BG_COLOR = '#126d87'
+        NORMAL_FG_COLOR = 'white'
+        SELECTED_BG_COLOR = '#7bd8f2'
+        SELECTED_FG_COLOR = 'black'
+        FOCUS_BORDER = '#e7e861'
+
+        HORIZONTAL_SPACE = (GRID_MARGIN * 2) + (GRID_SPACING * (self.COLUMNS - 1))
+        self.ITEM_WIDTH = int((self.app.screen_width - HORIZONTAL_SPACE) / self.COLUMNS)
         self.ITEM_HEIGHT = int(self.ITEM_WIDTH * 0.33)
         font_size = int(self.ITEM_HEIGHT * 0.25)
-        border_width = 12
-        bg_normal = '#0f85a6'
-        fg_normal = 'white'
-        bg_select = '#19b9e6'
-        focused   = '#9bdcee'
-        self.STYLE_NORMAL_UNFOCUSED   = 'font-size: %dpx; background-color: %s; color: %s; border: solid %s; border-width: %dpx;' % (font_size, bg_normal, fg_normal, bg_normal, border_width)
-        self.STYLE_SELECTED_UNFOCUSED = 'font-size: %dpx; background-color: %s; border: solid %s; border-width: %dpx;' % (font_size, bg_select, bg_select, border_width)
-        self.STYLE_NORMAL_FOCUSED     = 'font-size: %dpx; background-color: %s; color: %s; border: solid %s; border-width: %dpx;' % (font_size, bg_normal, fg_normal, focused, border_width)
-        self.STYLE_SELECTED_FOCUSED   = 'font-size: %dpx; background-color: %s; border: solid %s; border-width: %dpx;' % (font_size, bg_select, focused, border_width)
+        self.STYLE_NORMAL_UNFOCUSED   = 'font-size: %dpx; background-color: %s; color: %s; border: solid %s; border-width: %dpx;' % (font_size, NORMAL_BG_COLOR, NORMAL_FG_COLOR, NORMAL_BG_COLOR, BORDER_WIDTH)
+        self.STYLE_SELECTED_UNFOCUSED = 'font-size: %dpx; background-color: %s; color: %s; border: solid %s; border-width: %dpx;' % (font_size, SELECTED_BG_COLOR, SELECTED_FG_COLOR, SELECTED_BG_COLOR, BORDER_WIDTH)
+        self.STYLE_NORMAL_FOCUSED     = 'font-size: %dpx; background-color: %s; color: %s; border: solid %s; border-width: %dpx;' % (font_size, NORMAL_BG_COLOR, NORMAL_FG_COLOR, FOCUS_BORDER, BORDER_WIDTH)
+        self.STYLE_SELECTED_FOCUSED   = 'font-size: %dpx; background-color: %s; color: %s; border: solid %s; border-width: %dpx;' % (font_size, SELECTED_BG_COLOR, SELECTED_FG_COLOR, FOCUS_BORDER, BORDER_WIDTH)
 
         self.ui_items = []
         self.app.scroll = QScrollArea()
@@ -91,8 +94,8 @@ class addon():
         grid_years = QGridLayout()
         grid_buttons = QGridLayout()
         for g in (grid_tags, grid_years, grid_buttons):
-            g.setSpacing(self.GRID_SPACING)
-            g.setContentsMargins(self.GRID_MARGIN, self.GRID_MARGIN, self.GRID_MARGIN, self.GRID_MARGIN)
+            g.setSpacing(GRID_SPACING)
+            g.setContentsMargins(GRID_MARGIN, GRID_MARGIN, GRID_MARGIN, GRID_MARGIN)
 
         i = 0
         # Add the tag buttons.
@@ -129,9 +132,9 @@ class addon():
         grid_buttons.setRowStretch(((i - 1) // self.COLUMNS) + 1, 1)
 
         page_layout.addLayout(grid_tags)
-        page_layout.addSpacerItem(QSpacerItem(1, self.ITEM_HEIGHT))
+        page_layout.addSpacerItem(QSpacerItem(1, self.ITEM_HEIGHT // 2))
         page_layout.addLayout(grid_years)
-        page_layout.addSpacerItem(QSpacerItem(1, self.ITEM_HEIGHT))
+        page_layout.addSpacerItem(QSpacerItem(1, self.ITEM_HEIGHT // 2))
         page_layout.addLayout(grid_buttons)
         widget.setLayout(page_layout)
 

@@ -41,18 +41,16 @@ class skin():
         self.ICON_PLAYABLE = os.path.join(res_img, 'DefaultPlaylist_shadow.png')
         self.ICON_DEFAULT_ADDON = os.path.join(res_img, 'icon_settings_addons43.png')
 
-        # The QGridLayout have fixed style margin and spacing that cannot be reduced or removed.
-        self.GRID_FIXED_MARGIN = 9
-        self.GRID_FIXED_SPACING = 1
-
         # Grid margin and spacing added to the fixed values.
-        self.GRID_HORIZONTAL_MARGIN = int(self.SCREEN_WIDTH * 0.01875)
+        self.GRID_MARGIN = int(self.SCREEN_WIDTH * 0.01875)
         self.GRID_ITEM_SPACING = int(self.SCREEN_WIDTH * 0.022)
         # Thumbmails border size.
-        self.THUMB_BORDER_SIZE = int(self.SCREEN_WIDTH / 320 )
+        self.THUMB_BORDER_SIZE = int(self.SCREEN_WIDTH * 0.0036)
         self.THUMB_BORDER_SIZE_FOCUSED = self.THUMB_BORDER_SIZE
         # Thumbnails image size.
-        self.THUMB_WIDTH_FOCUSED = (self.SCREEN_WIDTH - (self.GRID_FIXED_MARGIN * 2 + self.GRID_FIXED_SPACING * 2 * self.COLUMNS) - (self.GRID_HORIZONTAL_MARGIN * 2) - (self.GRID_ITEM_SPACING * (self.COLUMNS - 1)) - (self.THUMB_BORDER_SIZE_FOCUSED * 2 * self.COLUMNS)) // self.COLUMNS
+        HORIZONTAL_SPACE = (self.GRID_MARGIN * 2) + (self.GRID_ITEM_SPACING * (self.COLUMNS - 1))
+
+        self.THUMB_WIDTH_FOCUSED = int((self.SCREEN_WIDTH - HORIZONTAL_SPACE) / self.COLUMNS)
         self.THUMB_HEIGHT_FOCUSED = int(self.THUMB_WIDTH_FOCUSED / self.THUMBNAIL_RATIO)
         self.THUMB_WIDTH = int(self.THUMB_WIDTH_FOCUSED * 0.88)
         self.THUMB_HEIGHT = int(self.THUMB_WIDTH / self.THUMBNAIL_RATIO)
@@ -78,8 +76,8 @@ class skin():
         self.ITEM_CAPTION_WIDTH_FOCUSED = self.THUMB_WIDTH_FOCUSED + self.THUMB_BORDER_SIZE_FOCUSED * 2
         self.ITEM_CAPTION_HEIGHT = self.CAPTION_HEIGHT + self.THUMB_BORDER_SIZE
         self.ITEM_CAPTION_HEIGHT_FOCUSED = self.CAPTION_HEIGHT + self.THUMB_BORDER_SIZE_FOCUSED
-        self.CELL_MIN_WIDTH = self.THUMB_WIDTH_FOCUSED + self.THUMB_BORDER_SIZE_FOCUSED * 2 + 2
-        self.CELL_MIN_HEIGHT = self.THUMB_HEIGHT_FOCUSED + self.THUMB_BORDER_SIZE_FOCUSED * 2 + self.THUMB_BORDER_SIZE + self.CAPTION_HEIGHT + 2
+        self.CELL_MIN_WIDTH = self.THUMB_WIDTH_FOCUSED + self.THUMB_BORDER_SIZE_FOCUSED * 2
+        self.CELL_MIN_HEIGHT = self.THUMB_HEIGHT_FOCUSED + self.THUMB_BORDER_SIZE_FOCUSED * 2 + self.THUMB_BORDER_SIZE + self.CAPTION_HEIGHT
         self.ICON_PLAYABLE_SIZE = int(self.THUMB_WIDTH_FOCUSED / 4.2)
 
         # CSS styles.
@@ -94,4 +92,4 @@ class skin():
         self.STYLE_ICON_PLAYABLE = 'border-width: 0; background-color: rgba(0, 0, 0, 0);'
         self.STYLE_POPUP = 'font-family: %s; font-size: %dpx; color: %s; background-color: %s; padding: %dpx;' % (self.FONT_FAMILY, self.FONT_SIZE_POPUP, self.POPUP_COLOR, self.POPUP_BACKGROUND, self.FONT_SIZE_POPUP // 2)
 
-        #print('THUMB_FOCUSED: %d x %d, THUMB: %d x %d, GRID_HORIZONTAL_MARGIN: %d, GRID_ITEM_SPACING %d, THUMB_BORDER_SIZE %d, CAPTION_HEIGHT: %d' % (THUMB_WIDTH_FOCUSED, THUMB_HEIGHT_FOCUSED, THUMB_WIDTH, THUMB_HEIGHT, GRID_HORIZONTAL_MARGIN, GRID_ITEM_SPACING, THUMB_BORDER_SIZE, CAPTION_HEIGHT))
+        #print('THUMB_FOCUSED: %d x %d, THUMB: %d x %d, GRID_MARGIN: %d, GRID_ITEM_SPACING %d, THUMB_BORDER_SIZE %d, CAPTION_HEIGHT: %d' % (THUMB_WIDTH_FOCUSED, THUMB_HEIGHT_FOCUSED, THUMB_WIDTH, THUMB_HEIGHT, GRID_MARGIN, GRID_ITEM_SPACING, THUMB_BORDER_SIZE, CAPTION_HEIGHT))

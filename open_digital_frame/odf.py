@@ -35,6 +35,7 @@ from PyQt5.QtWidgets import (
     QLabel,
     QMainWindow,
     QScrollArea,
+    QSpacerItem,
     QVBoxLayout,
     QWidget)
 import xml.etree.ElementTree as ET
@@ -438,12 +439,23 @@ class MainWindow(QMainWindow):
         self.ui_items = []
         self.focused_item = None
         self.scroll = QScrollArea()
+        # Hide the frame of the scroll area.
+        self.scroll.setFrameStyle(QFrame.NoFrame)
+        # Sets the scroll area to be the main window’s central widget.
         self.setCentralWidget(self.scroll)
-        self.widget = QWidget()
-        self.grid = QGridLayout()
-        self.grid.setSpacing(self.skin.GRID_ITEM_SPACING)
-        self.grid.setContentsMargins(self.skin.GRID_HORIZONTAL_MARGIN, self.skin.GRID_ITEM_SPACING, self.skin.GRID_HORIZONTAL_MARGIN, self.skin.GRID_ITEM_SPACING)
-        self.widget.setStyleSheet(self.skin.STYLE_GRID)
+        # Scroll Area Properties.
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        widget = QWidget()
+        widget.setMinimumSize(self.screen_width, self.screen_height)
+        page_layout = QVBoxLayout()
+        page_layout.setSpacing(0)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        grid = QGridLayout()
+        grid.setSpacing(self.skin.GRID_ITEM_SPACING)
+        grid.setContentsMargins(self.skin.GRID_MARGIN, self.skin.GRID_MARGIN, self.skin.GRID_MARGIN, self.skin.GRID_MARGIN)
+        widget.setStyleSheet(self.skin.STYLE_GRID)
 
         # Install event filter to catch key presses.
         self.scroll.installEventFilter(self)
@@ -493,6 +505,7 @@ class MainWindow(QMainWindow):
             # Each grid item is contained into a QVBoxLayout.
             item_layout = QVBoxLayout()
             item_layout.setSpacing(0)
+            item_layout.setContentsMargins(0, 0, 0, 0)
 
             # Read and scale the thumbnail image.
             thumbnail_image = self.skin.ICON_BROKEN_IMAGE
@@ -539,6 +552,7 @@ class MainWindow(QMainWindow):
                 slideshow_icon.setStyleSheet(self.skin.STYLE_ICON_PLAYABLE)
                 slideshow_icon.move(0, 0)
 
+            # Align the item vertically into the cell using stretching sapace.
             item_layout.addStretch()
             item_layout.addWidget(item_pixmap, alignment=Qt.AlignCenter)
             item_layout.addWidget(item_caption, alignment=Qt.AlignCenter)
@@ -555,38 +569,30 @@ class MainWindow(QMainWindow):
 
             x = i % self.skin.COLUMNS
             y = i // self.skin.COLUMNS
-            self.grid.addLayout(item_layout, y, x)
+            grid.addLayout(item_layout, y, x)
             i += 1
 
         # Eventually fill the grid to COLUMNS with empty widgets.
         if i < self.skin.COLUMNS:
             for x in range(i, self.skin.COLUMNS):
-                self.grid.addWidget(QWidget(), 0, x)
+                grid.addWidget(QWidget(), 0, x)
 
         # Set the minimum size for the cells of the grid.
         for column in range(0, self.skin.COLUMNS):
-            self.grid.setColumnMinimumWidth(column, self.skin.CELL_MIN_WIDTH)
+            grid.setColumnMinimumWidth(column, self.skin.CELL_MIN_WIDTH)
         for row in range(0, math.ceil(float(len(self.ui_items)) / self.skin.COLUMNS)):
-            self.grid.setRowMinimumHeight(row, self.skin.CELL_MIN_HEIGHT)
+            grid.setRowMinimumHeight(row, self.skin.CELL_MIN_HEIGHT)
 
-        # Add a stretching space to the bottom of the grid page.
-        page_layout = QVBoxLayout()
-        page_layout.setSpacing(0)
-        page_layout.addLayout(self.grid)
+        # Add stretching space to the bottom of the grid, so it aligns to the top.
+        page_layout.addSpacerItem(QSpacerItem(1, int(self.skin.GRADIENT_HEIGHT * 0.5)))
+        page_layout.addLayout(grid)
         page_layout.addStretch()
-        self.widget.setLayout(page_layout)
+        widget.setLayout(page_layout)
 
-        # Scroll Area Properties.
-        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # The widget becomes a child of the scroll area.
+        self.scroll.setWidget(widget)
         # The scroll area will automatically resize the widget in order to avoid scroll bars.
         self.scroll.setWidgetResizable(True)
-        # The widget becomes a child of the scroll area.
-        self.scroll.setWidget(self.widget)
-        # Hide the frame of the scroll area.
-        self.scroll.setFrameStyle(QFrame.NoFrame)
-        # Sets the scroll area to be the main window’s central widget.
-        self.setCentralWidget(self.scroll)
 
         # Display the window title over the scroll area.
         window_title_shadow = QLabel(self.scroll)
@@ -629,7 +635,7 @@ class MainWindow(QMainWindow):
 
         self.show()
         # Set the actual UI focus and the "logical" focus.
-        self.widget.setFocus()
+        widget.setFocus()
         self.moveFocus(index_to_focus)
         # UI refresh is complete, release the mutex lock.
         self.main_window_refresh_mutex.unlock()
@@ -841,8 +847,6 @@ class MainWindow(QMainWindow):
                 cfg.write(new_configfile)
         except Exception as ex:
             logging.error('Cannot write configuration file "%s": %s' % (CFG_FILE, str(ex)))
-
-
 
 
 def main():
