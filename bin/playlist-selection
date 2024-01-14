@@ -26,7 +26,7 @@ __author__ = "Niccolo Rigacci"
 __copyright__ = "Copyright 2021 Niccolo Rigacci <niccolo@rigacci.org>"
 __license__ = "GPLv3-or-later"
 __email__ = "niccolo@rigacci.org"
-__version__ = "0.0.3"
+__version__ = "0.0.4"
 
 NFO_FILES = ['folder.nfo'];
 PLAYLIST_FILES = ['playlist_16x9.m3u', 'playlist.m3u']
@@ -117,7 +117,6 @@ def nfo_match_tags(nfo_file):
 def get_all_tags(root_dir):
     tags_found = []
     for dir_name, subdir_list, file_list in os.walk(root_dir):
-        nfo_file = None
         for filename in NFO_FILES:
             if filename in file_list:
                 nfo_file = os.path.join(dir_name, filename)
@@ -132,6 +131,31 @@ def get_all_tags(root_dir):
                         tags_found.append(t)
                 break
     return tags_found
+
+
+#-------------------------------------------------------------------------
+# Return a list of all the years from <date> found in .nfo files.
+#-------------------------------------------------------------------------
+def get_all_years(root_dir):
+    years_found = []
+    for dir_name, subdir_list, file_list in os.walk(root_dir):
+        for filename in NFO_FILES:
+            if filename in file_list:
+                nfo_file = os.path.join(dir_name, filename)
+                try:
+                    nfo_xml = ET.parse(nfo_file).getroot()
+                    dates = [ t.text.lower().replace(',', '') for t in nfo_xml.findall('date') ]
+                except:
+                    print(f'ERROR: Parsing file "{nfo_file}"')
+                    dates = []
+                for d in dates:
+                    dt = parse_date_tag(d)
+                    if dt is not None:
+                        year = str(dt.year)
+                        if year not in years_found:
+                            years_found.append(year)
+                break
+    return years_found
 
 
 #-------------------------------------------------------------------------
@@ -169,20 +193,25 @@ def add_playlist_entries(dir_name, playlist_file, output_file):
 # Main program.
 #-------------------------------------------------------------------------
 parser = argparse.ArgumentParser(description=u'Create a playlist using matching tags.')
-parser.add_argument('--root',     help='root directory to search for playlists', type=str, required=True)
-parser.add_argument('--any',      help='includes folders with at least one of these tags', type=str, metavar='TAGS')
-parser.add_argument('--all',      help='includes folders with all these tags', type=str, metavar='TAGS')
-parser.add_argument('--exclude',  help='exclude folders containing tags', type=str, metavar='TAGS')
-parser.add_argument('--datemin',  help='exclude folders with dates prior to the min', type=str)
-parser.add_argument('--datemax',  help='exclude folders with dates after the max', type=str)
-parser.add_argument('--shuffle',  help='shuffle directories in output playlist', action='store_true')
+parser.add_argument('--root',      help='root directory to search for playlists', type=str, required=True)
+parser.add_argument('--any',       help='includes folders with at least one of these tags', type=str, metavar='TAGS')
+parser.add_argument('--all',       help='includes folders with all these tags', type=str, metavar='TAGS')
+parser.add_argument('--exclude',   help='exclude folders containing tags', type=str, metavar='TAGS')
+parser.add_argument('--datemin',   help='exclude folders with dates prior to the min', type=str)
+parser.add_argument('--datemax',   help='exclude folders with dates after the max', type=str)
+parser.add_argument('--shuffle',   help='shuffle directories in output playlist', action='store_true')
 group = parser.add_mutually_exclusive_group(required=True)
-group.add_argument('--list-tags', help='list all tags found in folder.nfo files', action='store_true')
-group.add_argument('--output',    help='filename to save the playlist to', metavar='PLAYLIST', type=str)
+group.add_argument('--list-tags',  help='list all tags found in folder.nfo files', action='store_true')
+group.add_argument('--list-years', help='list all years found in folder.nfo files', action='store_true')
+group.add_argument('--output',     help='filename to save the playlist to', metavar='PLAYLIST', type=str)
 args = parser.parse_args()
 
 if args.list_tags:
     print(','.join(get_all_tags(args.root)))
+    sys.exit(0)
+
+if args.list_years:
+    print(','.join(get_all_years(args.root)))
     sys.exit(0)
 
 if sys.version_info[0] < 3:

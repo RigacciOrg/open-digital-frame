@@ -300,8 +300,16 @@ class addon():
 
     def getAllYears(self):
         """ Return all the playlist years reading folder.nfo files """
-        #return []
-        return ['1998', '1999', '2000', '2001', '2002', '2021', '2022', '2023', '2024']
+        cmd = ['playlist-selection', '--list-years', '--root', self.pictures_root]
+        logging.info('Executing command: %s' % (cmd,))
+        try:
+            output = subprocess.Popen(cmd, stdout=subprocess.PIPE).communicate()[0].decode('utf-8')
+            years_found = output.strip().split(',')
+            years_found.sort()
+        except Exception as ex:
+            logging.error('Exception running "%s": %s' % (cmd[0], str(ex)))
+            years_found = []
+        return years_found
 
 
     def getSelectedItems(self):
