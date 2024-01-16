@@ -15,6 +15,7 @@ tags and date is searched into a folder.nfo file.
 import argparse
 import datetime
 import hashlib
+import logging
 import os
 import os.path
 import random
@@ -31,6 +32,7 @@ __version__ = "0.0.4"
 NFO_FILES = ['folder.nfo'];
 PLAYLIST_FILES = ['playlist_16x9.m3u', 'playlist.m3u']
 
+logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.ERROR)
 
 #-------------------------------------------------------------------------
 # Return a datetime.datetime object from a string, or None.
@@ -61,58 +63,78 @@ def parse_date_tag(d):
 #   TAGS_ALL      All the tags must match.
 #   TAGS_ANY      At least one tag must match.
 #   TAGS_EXCLUDE  None must match.
-# If DATE_MIN or DATE_MAX are defined, do also selection by date. 
+# If YEARS is defined, select if date year is into the list.
+# Else if DATE_MIN or DATE_MAX are defined, select by date comparison. 
 #-------------------------------------------------------------------------
-def nfo_match_tags(nfo_file):
+def nfo_match(nfo_file):
     try:
         nfo_xml = ET.parse(nfo_file).getroot()
-        tags = [ t.text.lower().replace(',', '') for t in nfo_xml.findall('tag') ]
+        tags = [t.text.lower().replace(',', '') for t in nfo_xml.findall('tag')]
     except:
-        print(f'ERROR: Parsing file "{nfo_file}"')
+        logging.error(f'Parsing file "{nfo_file}"')
         return False
-    date_tags = nfo_xml.findall('date')
+    date_tags = [t.text for t in nfo_xml.findall('date')]
     if len(date_tags) > 0:
-        nfo_date = parse_date_tag(date_tags[0].text)
+        nfo_1st_date = parse_date_tag(date_tags[0])
     else:
-        nfo_date = None
+        nfo_1st_date = None
 
     # If no match tags are specified, assume True as default and do match by date.
-    if nfo_date != None and (DATE_MIN != None or DATE_MAX != None) and len(TAGS_ALL) == 0 and len(TAGS_ANY) == 0:
+    match_by_tags = len(TAGS_ALL) > 0 or len(TAGS_ANY) > 0
+    match_by_date = nfo_1st_date != None and (DATE_MIN != None or DATE_MAX != None or len(YEARS) > 0)
+    if not match_by_tags and match_by_date:
         match_tags = True
     else:
         match_tags = False
 
+    # Include match by tags.
     required_all_count = len(TAGS_ALL)
     for tag in tags:
-        if tag in TAGS_EXCLUDE:
-            #print(f'DEBUG: Excluding "{dir_name}" because it contains the "{tag}" tag')
-            break
         if tag in TAGS_ANY:
-            print(f'INFO: Including "{dir_name}" because it contains the "{tag}" tag')
+            logging.info(f'Including "{dir_name}" because it contains the "{tag}" tag')
             match_tags = True
             break
         if tag in TAGS_ALL:
             required_all_count -= 1
             if required_all_count == 0:
-                print(f'INFO: Including "{dir_name}" because it contains all the tags {TAGS_ALL}')
+                logging.info(f'Including "{dir_name}" because it contains all the tags {TAGS_ALL}')
                 match_tags = True
                 break
 
-    if nfo_date != None:
-        if DATE_MIN:
-            if nfo_date < DATE_MIN:
+    # Verify match by date.
+    if nfo_1st_date != None:
+        if len(YEARS) > 0:
+            one_match = False
+            for tag in date_tags:
+                dt = parse_date_tag(tag)
+                if dt is not None:
+                    if str(dt.year) in YEARS:
+                        one_match = True
+                        break
+            if not one_match:
                 match_tags = False
-        if DATE_MAX:
-            if nfo_date > DATE_MAX:
-                match_tags = False
+        else:
+            if DATE_MIN:
+                if nfo_1st_date < DATE_MIN:
+                    match_tags = False
+            if DATE_MAX:
+                if nfo_1st_date > DATE_MAX:
+                    match_tags = False
         if match_tags:
-            print(f'INFO: Including "{dir_name}" because it has date "{nfo_date}"')
+            logging.info(f'Including "{dir_name}" because it has dates "{date_tags}"')
+
+    # Exclude unwanted tags.
+    for tag in tags:
+        if tag in TAGS_EXCLUDE:
+            logging.debug(f'Excluding "{dir_name}" because it contains the "{tag}" tag')
+            match_tags = False
+            break
 
     return match_tags
 
 
 #-------------------------------------------------------------------------
-# Return a list of all the <tag> elements used in .nfo files.
+# Return a list of all the <tag> elements found in .nfo files.
 #-------------------------------------------------------------------------
 def get_all_tags(root_dir):
     tags_found = []
@@ -124,7 +146,7 @@ def get_all_tags(root_dir):
                     nfo_xml = ET.parse(nfo_file).getroot()
                     tags = [ t.text.lower().replace(',', '') for t in nfo_xml.findall('tag') ]
                 except:
-                    print(f'ERROR: Parsing file "{nfo_file}"')
+                    logging.error(f'Parsing file "{nfo_file}"')
                     tags = []
                 for t in tags:
                     if t not in tags_found:
@@ -144,9 +166,9 @@ def get_all_years(root_dir):
                 nfo_file = os.path.join(dir_name, filename)
                 try:
                     nfo_xml = ET.parse(nfo_file).getroot()
-                    dates = [ t.text.lower().replace(',', '') for t in nfo_xml.findall('date') ]
+                    dates = [ t.text.lower() for t in nfo_xml.findall('date') ]
                 except:
-                    print(f'ERROR: Parsing file "{nfo_file}"')
+                    logging.error(f'ERROR: Parsing file "{nfo_file}"')
                     dates = []
                 for d in dates:
                     dt = parse_date_tag(d)
@@ -182,7 +204,7 @@ def add_playlist_entries(dir_name, playlist_file, output_file):
             item_hash = hashlib.md5(item.encode('utf-8')).hexdigest()
             if (item_hash in items_added):
                 # Skip duplicate entry.
-                #print('DEBUG: Skipping duplicate entry for "{filename}"')
+                logging.debug(f'Skipping duplicate entry for "{filename}"')
                 continue
             else:
                 items_added.append(item_hash)
@@ -197,8 +219,9 @@ parser.add_argument('--root',      help='root directory to search for playlists'
 parser.add_argument('--any',       help='includes folders with at least one of these tags', type=str, metavar='TAGS')
 parser.add_argument('--all',       help='includes folders with all these tags', type=str, metavar='TAGS')
 parser.add_argument('--exclude',   help='exclude folders containing tags', type=str, metavar='TAGS')
-parser.add_argument('--datemin',   help='exclude folders with dates prior to the min', type=str)
-parser.add_argument('--datemax',   help='exclude folders with dates after the max', type=str)
+parser.add_argument('--years',     help='include folders with the date year in the list', type=str, metavar='YEARS')
+parser.add_argument('--datemin',   help='exclude folders dated before the minimum', type=str)
+parser.add_argument('--datemax',   help='exclude folders dated later than the max', type=str)
 parser.add_argument('--shuffle',   help='shuffle directories in output playlist', action='store_true')
 group = parser.add_mutually_exclusive_group(required=True)
 group.add_argument('--list-tags',  help='list all tags found in folder.nfo files', action='store_true')
@@ -219,7 +242,7 @@ if sys.version_info[0] < 3:
 try:
     output_file = open(args.output, 'w')
 except:
-    print(f'ERROR: Cannot write file "{args.output}"')
+    logging.error(f'Cannot write file "{args.output}"')
     sys.exit(1)
 
 # Parse the requested tags and make all of them lowercase.
@@ -234,8 +257,16 @@ if args.exclude:
     TAGS_EXCLUDE = [ t.lower().strip() for t in args.exclude.split(',') ]
 
 # Parse the requested date criteria.
-DATE_MIN = parse_date_tag(args.datemin)
-DATE_MAX = parse_date_tag(args.datemax)
+YEARS = []
+DATE_MIN = None
+DATE_MAX = None
+if args.years:
+    YEARS = [ y.strip() for y in args.years.split(',') ]
+if args.years is not None and (args.datemin is not None or args.datemax is not None):
+    logging.warning('Ignoring --datemin and --datemax args because --years is present')
+else:
+    DATE_MIN = parse_date_tag(args.datemin)
+    DATE_MAX = parse_date_tag(args.datemax)
 
 items_added = []
 output_file.write('#EXTM3U-PHOTO-REFRAME\n')
@@ -268,7 +299,7 @@ for dir_name in dir_list:
             playlist_file = filename
             break
     if nfo_file is not None and playlist_file is not None:
-        if nfo_match_tags(os.path.join(dir_name, nfo_file)):
+        if nfo_match(os.path.join(dir_name, nfo_file)):
             add_playlist_entries(dir_name, playlist_file, output_file)
 
 output_file.close()
