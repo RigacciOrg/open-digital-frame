@@ -325,7 +325,7 @@ class addon():
 
     def generatePlaylist(self, query):
         """ Receive an URL-like query string and generate a .m3u playlist file """
-        output_filename = '/tmp/playlist_tags.m3u'
+        output_filename = os.path.join(self.app.tmp_dir, 'playlist_selection.m3u')
         cmd = ['playlist-selection', '--root', self.pictures_root, '--output', output_filename]
         logging.info('Generating a playlist for query string "%s"' % (query,))
         query_dict = urllib.parse.parse_qs(query)

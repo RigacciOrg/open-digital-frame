@@ -99,6 +99,7 @@ cfg['DEFAULT'] = {
     'sort_keys': '["sorttitle", "date", "title"]',
     'addons': '["play_selection", "poweroff"]',
     'auto_play': '',
+    'tmp_dir': '/run/user/{uid}',
     'logging_level': 'INFO'
 }
 cfg['App'] = {}
@@ -222,6 +223,8 @@ try:
     ADDONS_LIST = json.loads(cfg['App']['addons'])
     # Playlist to play on start, relative to pictures_root.
     AUTO_PLAY = cfg['App']['auto_play']
+    # Where to create temporary files.
+    TMP_DIR = cfg['App']['tmp_dir']
 except Exception as ex:
     logging.error('Cannot parse configuration file "%s": %s' % (CFG_FILE, str(ex)))
     sys.exit(1)
@@ -232,6 +235,9 @@ PARENT_DIR = '..'
 ADDONS_DIR = 'addons:'
 # Timeout to hide the popup tooltip.
 POPUP_TIMEOUT_MS = 4000
+# Eventually replace UID in TMP_DIR.
+if '{uid}' in TMP_DIR:
+    TMP_DIR = TMP_DIR.replace('{uid}', str(os.getuid()))
 
 # If pictures directory is not defined, try $HOME/Pictures.
 if PICTURES_ROOT is None or PICTURES_ROOT == '':
@@ -308,6 +314,7 @@ class MainWindow(QMainWindow):
             sys.exit(1)
 
         self.pictures_root = PICTURES_ROOT
+        self.tmp_dir = TMP_DIR
         self.setWindowTitle(APP_TITLE)
         self.sort_key = SORT_KEYS[0]
         self.sort_reverse = False
