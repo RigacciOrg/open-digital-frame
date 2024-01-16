@@ -90,6 +90,13 @@ Beside the two main programs **open-digital-frame** and
 **photo-reframe**, some other utilities are provided. They are 
 Python or shell scripts and you can customize them as required.
 
+* **playlist-selection** Generate a playlist by tags and dates. 
+Scan the entire pictures tree for _folders.nfo_ an 
+_playlist.m3u_ files, if the nfo file matches the tags or date 
+criteria, the relative playlist is added to the selection. The 
+criteria on tags can be _any_, _all_ or _exclude_. The criteria 
+by date can be _min_, _max_ or _year_ match.
+
 * **photo-info** Extract Exif metadata from an image. Its output 
 is used to overlay metadata on the image itself during the 
 slideshow.
@@ -198,3 +205,28 @@ The keys to use are:
 
 If you re-run the program, the existing playlist is loaded and 
 it is possible to make further changes to it.
+
+## Raspberry Pi special configuration
+
+### Turning off the LEDs
+
+When the digital frame is in stand-by (the screen is black and 
+turned off), there is a red light glow around the frame, caused 
+by the Raspberry Pi power LED being very bright, this is 
+particularly disturbing when the room is dark. Fortunately 
+enough there is a way to turn off the LEDs, just add the 
+following snippet at the end of **/boot/config.txt** and reboot:
+
+```
+# Disable Ethernet LEDs
+dtparam=eth_led0=14
+dtparam=eth_led1=14
+
+# Disable the PWR LED
+dtparam=pwr_led_trigger=none
+dtparam=pwr_led_activelow=off
+
+# Disable the Activity LED
+dtparam=act_led_trigger=none
+dtparam=act_led_activelow=off
+```

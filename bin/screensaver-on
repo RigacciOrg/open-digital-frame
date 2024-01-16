@@ -1,5 +1,5 @@
 #!/bin/sh
-# Disable screen saver.
+# Disable software screen saver.
 xset s off
 # Enable DPMS screen saver.
 xset dpms 300 300 300
