@@ -1,3 +1,12 @@
+# -*- coding: utf-8 -*-
+"""
+Add-on for Open Digital Frame.
+Browse a pictures tree reading all the folder.nfo files to
+create a list of tags and date years. Then show that elements
+into a scrollable page allowing to select what ones you want to
+play. A temporary playlist will be created merging the selected
+playlists.
+"""
 from PyQt5.QtCore import (
     Qt,
     QEvent,
@@ -339,8 +348,7 @@ class addon():
             csv = query_dict['years'][0]
             if csv != '':
                 query_is_empty = False
-                # TODO: Implement --years into the external program.
-                #cmd += ['--years', csv]
+                cmd += ['--years', csv]
         if query_is_empty:
             logging.warning('Query is empty')
             output_filename = None
