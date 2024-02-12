@@ -12,14 +12,23 @@ if [ ! -f "$IMAGE" ]; then
     exit 1
 fi
 
+# Please, configure the following variables in /etc/default/photo-share
+SMTP_SERVER='mail.server.tld:587'
+LOGIN='login_name'
+PASSWORD='password'
+FROM='digital.frame@mail.server.tld'
+FROM_NAME='Digital Frame Rigacci.Org'
+SUBJECT='Image from Open Digital Frame'
+test -f /etc/default/photo-share && . /etc/default/photo-share
+
 # The command will be executed in background.
 shipmail-ng \
-    --smtp='mail.server.tld:587' --starttls \
-    -u 'login_name' -p 'password' \
-    --me='digital.frame@rigacci.org' \
-    --mn='Digital Frame Rigacci.Org' \
+    --smtp="$SMTP_SERVER" --starttls \
+    -u "$LOGIN" -p "$PASSWORD" \
+    --me="$FROM" \
+    --mn="$FROM_NAME" \
     --de="$RECIPIENT" \
-    -s 'Image from Open Digital Frame' \
+    -s "$SUBJECT" \
     -f /dev/null \
     -a "$IMAGE" \
     </dev/null &>/dev/null &
