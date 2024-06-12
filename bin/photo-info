@@ -23,7 +23,7 @@ import subprocess
 import sys
 
 __author__ = "Niccolo Rigacci"
-__copyright__ = "Copyright 2020-20222 Niccolo Rigacci <niccolo@rigacci.org>"
+__copyright__ = "Copyright 2020-2024 Niccolo Rigacci <niccolo@rigacci.org>"
 __license__ = "GPLv3-or-later"
 __email__ = "niccolo@rigacci.org"
 __version__ = "0.2.2"
