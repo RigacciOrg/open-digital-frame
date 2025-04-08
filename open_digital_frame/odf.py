@@ -56,10 +56,10 @@ import time
 from urllib.parse import urlparse
 
 __author__ = "Niccolo Rigacci"
-__copyright__ = "Copyright 2023 Niccolo Rigacci <niccolo@rigacci.org>"
+__copyright__ = "Copyright 2023-2024 Niccolo Rigacci <niccolo@rigacci.org>"
 __license__ = "GPLv3-or-later"
 __email__ = "niccolo@rigacci.org"
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 
 # Some useful mappings from string to values.
@@ -140,6 +140,18 @@ def read_directory_nfo(path):
     return result
 
 
+def get_directory_playlist(path):
+    """ Return the filename of the playlist found in path, or None """
+    playlist_found = None
+    for name in FOLDER_PLAYLISTS:
+        playlist = name.strip()
+        playlist_path = os.path.join(path, playlist)
+        if os.path.exists(playlist_path.encode('utf-8')):
+            playlist_found = playlist
+            break
+    return playlist_found
+
+
 def get_directory_info(path):
     """ Read the path/folder.nfo file and return a dictionary """
     nfo = {}
@@ -158,13 +170,10 @@ def get_directory_info(path):
         if os.path.exists(dir_thumb.encode('utf-8')):
             nfo['thumbnail'] = dir_thumb
             break
-    for name in FOLDER_PLAYLISTS:
-        playlist = name.strip()
-        playlist_path = os.path.join(path, playlist)
-        if os.path.exists(playlist_path.encode('utf-8')):
-            nfo['playlist'] = playlist
-            nfo['slides'] = playlist_length(playlist_path)
-            break
+    playlist = get_directory_playlist(path)
+    if playlist is not None:
+        nfo['playlist'] = playlist
+        nfo['slides'] = playlist_length(os.path.join(path, playlist))
     # Read the .nfo xml file for actual values.
     nfo_file = os.path.join(path, 'folder.nfo')
     if os.path.exists(nfo_file.encode('utf-8')):
@@ -672,6 +681,51 @@ class MainWindow(QMainWindow):
         self.scroll.ensureWidgetVisible(self.ui_items[self.focused_item]['caption'])
 
 
+    def playChildPlaylists(self, item_index):
+        """ Search all the child playlists and play them in sequence """
+        # Get nfo metadata of the selected item.
+        nfo = self.ui_items[item_index]['nfo']
+        #print('nfo: %s' % (nfo,))
+        # Some items cannot be played this way.
+        if nfo['dir'] == '..' or nfo['dir'] == 'addons:' or nfo['dir'].startswith('addon:'):
+            logging.debug('Cannot playChildPlaylists() this item')
+            return
+        # Find recursively all the playlists starting from this item.
+        start_dir = nfo['path']
+        playlists = []
+        playlist = get_directory_playlist(start_dir)
+        if playlist is not None:
+            playlists.append(os.path.join(start_dir, playlist),)
+        for root, dirs, files in os.walk(start_dir):
+            for d in dirs:
+                path = os.path.join(root, d)
+                playlist = get_directory_playlist(path)
+                if playlist is not None:
+                    playlists.append(os.path.join(path, playlist),)
+        logging.debug('Playlists found: %s' % (playlists,))
+        if len(playlists) < 1:
+            return
+        # Concatenate the playlists found into a temporary file.
+        output_file = os.path.join(self.tmp_dir, 'playlist_recursive.m3u')
+        # From playlists get only the images with a geometry specified.
+        image_pattern = re.compile(r'^[^#].*\|[0-9x+]+$')
+        try:
+            with open(output_file, 'w', encoding='utf-8') as outfile:
+                for pl in playlists:
+                    path = os.path.dirname(pl)
+                    with open(pl, 'r', encoding='utf-8') as infile:
+                        for line in infile:
+                            line = line.strip()
+                            if image_pattern.match(line):
+                                outfile.write(os.path.join(path, line) + "\n")
+        except Exception as ex:
+            logging.error('Cannot concatenate playlists: %s' % (str(ex),))
+            return
+        logging.debug('Created temporary playlist "%s"' % (output_file,))
+        self.playlist = output_file
+        self.autoPlay()
+
+
     def selectItem(self, item_index):
         """ Double click or Return key over an item  """
         # Remember the focused item for this directory before selecting the new.
@@ -679,7 +733,7 @@ class MainWindow(QMainWindow):
         self.focused_item_in_dir[self.current_path] = focused_dir
         # Get nfo metadata of the selected item.
         nfo = self.ui_items[item_index]['nfo']
-        print('nfo: %s' % (nfo,))
+        #print('nfo: %s' % (nfo,))
         # If the selected item has a playlist, play it.
         if 'playlist' in nfo and nfo['playlist'] is not None:
             playlist = os.path.join(nfo['path'], nfo['playlist'])
@@ -773,6 +827,10 @@ class MainWindow(QMainWindow):
         elif event.type() == QEvent.KeyPress:
             if event.key() in (Qt.Key_Enter, Qt.Key_Return, Qt.Key_Space):
                 self.selectItem(self.focused_item)
+            elif event.key() == Qt.Key_P:
+                # Find all the child playlists, concatenate them and play.
+                logging.debug('Playing all the child playlists')
+                self.playChildPlaylists(self.focused_item)
             elif event.key() in (Qt.Key_Backspace, Qt.Key_Escape):
                 # If the first item is the parent directory, switch to it.
                 if self.ui_items[0]['nfo']['dir'] == PARENT_DIR:
