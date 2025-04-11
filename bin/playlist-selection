@@ -27,7 +27,7 @@ __author__ = "Niccolo Rigacci"
 __copyright__ = "Copyright 2021 Niccolo Rigacci <niccolo@rigacci.org>"
 __license__ = "GPLv3-or-later"
 __email__ = "niccolo@rigacci.org"
-__version__ = "0.0.4"
+__version__ = "0.0.5"
 
 NFO_FILES = ['folder.nfo'];
 PLAYLIST_FILES = ['playlist_16x9.m3u', 'playlist.m3u']
@@ -73,6 +73,7 @@ def nfo_match(nfo_file):
     except:
         logging.error(f'Parsing file "{nfo_file}"')
         return False
+    # The .nfo file may contains several <date> tags, get the first.
     date_tags = [t.text for t in nfo_xml.findall('date')]
     if len(date_tags) > 0:
         nfo_1st_date = parse_date_tag(date_tags[0])
@@ -81,30 +82,34 @@ def nfo_match(nfo_file):
 
     # If no match tags are specified, assume True as default and do match by date.
     match_by_tags = len(TAGS_ALL) > 0 or len(TAGS_ANY) > 0
-    match_by_date = nfo_1st_date != None and (DATE_MIN != None or DATE_MAX != None or len(YEARS) > 0)
+    match_by_date = DATE_MIN != None or DATE_MAX != None or len(YEARS) > 0
     if not match_by_tags and match_by_date:
-        match_tags = True
+        nfo_does_match = True
     else:
-        match_tags = False
+        nfo_does_match = False
 
-    # Include match by tags.
+    # Verify match by tags.
     required_all_count = len(TAGS_ALL)
     for tag in tags:
         if tag in TAGS_ANY:
-            logging.info(f'Including "{dir_name}" because it contains the "{tag}" tag')
-            match_tags = True
+            logging.info(f'Considering "{dir_name}" because it contains the "{tag}" tag')
+            nfo_does_match = True
             break
         if tag in TAGS_ALL:
             required_all_count -= 1
             if required_all_count == 0:
-                logging.info(f'Including "{dir_name}" because it contains all the tags {TAGS_ALL}')
-                match_tags = True
+                logging.info(f'Considering "{dir_name}" because it contains all the tags {TAGS_ALL}')
+                nfo_does_match = True
                 break
 
-    # Verify match by date.
-    if nfo_1st_date != None:
+    # Then verify match by date.
+    if nfo_1st_date == None and match_by_date:
+        logging.info(f'Excluding "{dir_name}" because date is missing, but a match was requested')
+        nfo_does_match = False
+    else:
         if len(YEARS) > 0:
             one_match = False
+            # Compare all the <date> tags from the .nfo file.
             for tag in date_tags:
                 dt = parse_date_tag(tag)
                 if dt is not None:
@@ -112,25 +117,32 @@ def nfo_match(nfo_file):
                         one_match = True
                         break
             if not one_match:
-                match_tags = False
+                logging.info(f'Excluding "{dir_name}" because date does not match years "{YEARS}"')
+                nfo_does_match = False
         else:
+            # In date range is requested, compare only the first <date> tag.
             if DATE_MIN:
                 if nfo_1st_date < DATE_MIN:
-                    match_tags = False
+                    logging.info(f'Excluding "{dir_name}" because date is lower than "{DATE_MIN}"')
+                    nfo_does_match = False
             if DATE_MAX:
                 if nfo_1st_date > DATE_MAX:
-                    match_tags = False
-        if match_tags:
-            logging.info(f'Including "{dir_name}" because it has dates "{date_tags}"')
+                    logging.info(f'Excluding "{dir_name}" because date is greather than "{DATE_MAX}"')
+                    nfo_does_match = False
+        if nfo_does_match:
+            logging.info(f'Considering "{dir_name}" because it has dates "{date_tags}"')
 
     # Exclude unwanted tags.
     for tag in tags:
         if tag in TAGS_EXCLUDE:
             logging.debug(f'Excluding "{dir_name}" because it contains the "{tag}" tag')
-            match_tags = False
+            nfo_does_match = False
             break
 
-    return match_tags
+    if nfo_does_match:
+        logging.info(f'Including "{dir_name}" because it matches the requested criteria')
+
+    return nfo_does_match
 
 
 #-------------------------------------------------------------------------
@@ -214,7 +226,11 @@ def add_playlist_entries(dir_name, playlist_file, output_file):
 #-------------------------------------------------------------------------
 # Main program.
 #-------------------------------------------------------------------------
-parser = argparse.ArgumentParser(description=u'Create a playlist using matching tags.')
+parser = argparse.ArgumentParser(
+    description='Create a playlist using matching tags.',
+    epilog="Options --any, --all, --exclude and --years accept comma separated values.\nIf a match by date is requested (--years, --datemin or --datemax), it is intended to be combined with the AND operator to the request by --any and --all tags.",
+    formatter_class=argparse.RawDescriptionHelpFormatter
+)
 parser.add_argument('--root',      help='root directory to search for playlists', type=str, required=True)
 parser.add_argument('--any',       help='includes folders with at least one of these tags', type=str, metavar='TAGS')
 parser.add_argument('--all',       help='includes folders with all these tags', type=str, metavar='TAGS')
