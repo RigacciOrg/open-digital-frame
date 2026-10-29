@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Open Digital Frame -- Directory browser for a digital frame
 
@@ -56,10 +55,10 @@ import time
 from urllib.parse import urlparse
 
 __author__ = "Niccolo Rigacci"
-__copyright__ = "Copyright 2023-2024 Niccolo Rigacci <niccolo@rigacci.org>"
+__copyright__ = "Copyright 2023-2026 Niccolo Rigacci <niccolo@rigacci.org>"
 __license__ = "GPLv3-or-later"
 __email__ = "niccolo@rigacci.org"
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 
 # Some useful mappings from string to values.
@@ -329,6 +328,7 @@ class MainWindow(QMainWindow):
         self.sort_reverse = False
         self.addon_event_filter = None
         self.playlist = None
+        self.player_running = False
 
         # Get the screen size to calculate skin aspect.
         self.app = QApplication.instance()
@@ -342,7 +342,7 @@ class MainWindow(QMainWindow):
         module = importlib.import_module(skin_path)
         self.skin = module.skin(screen_width=self.screen_width)
 
-        # Import attitional addons; use a list to keep the import order.
+        # Import additional addons; use a list to keep the import order.
         self.addons = {}
         self.addons_list = []
         for addon in ADDONS_LIST:
@@ -399,6 +399,16 @@ class MainWindow(QMainWindow):
         self.scroll = QScrollArea()
         self.setCentralWidget(self.scroll)
         self.waitThread(self.refreshUI)
+        # Watchdog against lost focus.
+        self.app.applicationStateChanged.connect(self.onAppStateChanged)
+
+
+    def onAppStateChanged(self, state):
+        """ Reclaim focus if lost for some reasons """
+        if (state == Qt.ApplicationInactive
+                and self.isFullScreen()
+                and not self.player_running):
+            QTimer.singleShot(300, self.reclaimFocus)
 
 
     def waitThread(self, threaded_function):
@@ -776,11 +786,26 @@ class MainWindow(QMainWindow):
             # Add playlist to the end of the command line.
             cmd.append(self.playlist)
         logging.debug('Starting command "%s"' % (cmd,))
+        self.player_running = True
         try:
             retcode = subprocess.call(cmd)
         except Exception as ex:
             logging.error('Exception running "%s": %s' % (cmd[0], str(ex)))
+        finally:
+            self.player_running = False
         self.hideWaitIcon()
+        # Reclaim the focus with a small delay, just in case it was re-assigned.
+        QTimer.singleShot(300, self.reclaimFocus)
+
+
+    def reclaimFocus(self):
+        """ Be sure we have the focus """
+        if not self.isFullScreen():
+            return
+        self.raise_()
+        self.activateWindow()
+        if self.centralWidget():
+            self.centralWidget().setFocus()
 
 
     def autoPlay(self):
