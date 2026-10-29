@@ -7,7 +7,7 @@ BIN_SCRIPTS = odf-poweroff photo-info photo-share playlist-selection screensaver
 
 PYTHON_VERSION := $(shell python --version | awk '{print $$2}' | cut -f1,2 -d.)
 PYTHON_DIR = $(PREFIX)/lib/python$(PYTHON_VERSION)/dist-packages
-PYTHON_MODS = __init__.py odf.py
+PYTHON_MODS = __init__.py odf.py thumbs.py
 PY_RES_ADDONS := $(shell cd open_digital_frame/resources/addons; echo *.py)
 PY_RES_IMAGES := $(shell cd open_digital_frame/resources/img; echo *.png)
 

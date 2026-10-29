@@ -53,12 +53,13 @@ import subprocess
 import sys
 import time
 from urllib.parse import urlparse
+from open_digital_frame.thumbs import thumbnail_qimage
 
 __author__ = "Niccolo Rigacci"
 __copyright__ = "Copyright 2023-2026 Niccolo Rigacci <niccolo@rigacci.org>"
 __license__ = "GPLv3-or-later"
 __email__ = "niccolo@rigacci.org"
-__version__ = "0.2.3"
+__version__ = "0.2.4"
 
 
 # Some useful mappings from string to values.
@@ -113,8 +114,23 @@ logging.basicConfig(format='%(levelname)s: %(message)s', level=LOG_LEVEL)
 
 
 #----------------------------------------------------------------
-# Some global functions.
+# Some global functions and variables.
 #----------------------------------------------------------------
+# Cache QPixmap objects for thumbnails.
+_pixmap_cache = {}
+
+def get_thumbnail_pixmap(path, w, h):
+    """ Get the thumbnail QPixmap reading from the cache directory """
+    try:
+        key = (path, os.stat(path).st_mtime_ns, w, h)
+    except OSError:
+        return None
+    if key not in _pixmap_cache:
+        img = thumbnail_qimage(path, w, h)
+        _pixmap_cache[key] = QPixmap.fromImage(img) if img is not None else None
+    return _pixmap_cache[key]
+
+
 def parse_addon_url(url):
     """ Split an URL like addon:addon_name?key=val&... """
     r = urlparse(url)
@@ -546,11 +562,11 @@ class MainWindow(QMainWindow):
                         thumbnail_image = self.skin.ICON_DEFAULT_FOLDER
                 elif os.path.exists(thumb):
                     thumbnail_image = thumb
-            pixmap = QPixmap(thumbnail_image)
-            if pixmap.isNull():
-                pixmap = QPixmap(self.skin.ICON_BROKEN_IMAGE)
-            # Values for aspectRatioMode: Qt.KeepAspectRatio, Qt.IgnoreAspectRatio
-            thumbnail = pixmap.scaled(self.skin.THUMB_WIDTH_FOCUSED, self.skin.THUMB_HEIGHT_FOCUSED, aspectRatioMode=Qt.IgnoreAspectRatio, transformMode=Qt.SmoothTransformation)
+
+            w, h = self.skin.THUMB_WIDTH_FOCUSED, self.skin.THUMB_HEIGHT_FOCUSED
+            thumbnail = get_thumbnail_pixmap(thumbnail_image, w, h)
+            if thumbnail is None:
+                thumbnail = get_thumbnail_pixmap(self.skin.ICON_BROKEN_IMAGE, w, h)
 
             # Thumbnail image for the item.
             item_pixmap = QLabel()
